@@ -138,16 +138,17 @@ def run(cfg: Config, path: str) -> int:
 
         if result is not None and result.is_error:
             error = f"agent stopped: {result.subtype}\n" + "\n".join(result.errors or [])
+        body = None
         if error:
             body = f"[taylmail] This turn failed.\n\n{error}\n"
-        elif sent_after == sent_before and result is not None and result.result:
-            body = result.result
-        else:
-            body = None
-        if result is not None and result.permission_denials:
-            denied = "\n".join(f"- {d}" for d in result.permission_denials)
-            body = (body or "") + f"\n\n[taylmail] Permission denied for:\n{denied}\n"
-        if body:
+        elif sent_after == sent_before and result is not None:
+            body = result.result or ""
+            # Nothing was sent, so a denied tool call may be why.
+            if denials := result.permission_denials:
+                body += "\n\n[taylmail] Permission denied for:\n" + "\n".join(
+                    f"- {d.get('tool_name')}: {d.get('tool_input')}" for d in denials
+                )
+        if body and body.strip():
             deliver(cfg, reply_to(cfg, msg, session_id, body), session_id=session_id)
 
     Path(path).unlink()

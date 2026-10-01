@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Start aerc wired to taylmail, with all state in dev/sandbox (gitignored).
+# Usage: dev/aerc        (dev/aerc --reset wipes the sandbox first)
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+sandbox=$root/dev/sandbox
+if [[ ${1:-} == --reset ]]; then rm -rf "$sandbox"; shift; fi
+mkdir -p "$sandbox/Maildir/INBOX"/{cur,new,tmp}
+
+export TAYLMAIL_HOME=$sandbox/state
+export TAYLMAIL_MAILDIR=$sandbox/Maildir/INBOX
+export TAYLMAIL_CWD=$sandbox/repo
+
+# A small repo with a bug for the agent to fix.
+if [[ ! -d $TAYLMAIL_CWD ]]; then
+    git init -q -b main "$TAYLMAIL_CWD"
+    git -C "$TAYLMAIL_CWD" config user.name Claude
+    git -C "$TAYLMAIL_CWD" config user.email noreply@anthropic.com
+    printf 'def add(a, b):\n    return a - b\n\n\ndef mul(a, b):\n    return a * b\n' \
+        > "$TAYLMAIL_CWD/calc.py"
+    git -C "$TAYLMAIL_CWD" add . && git -C "$TAYLMAIL_CWD" commit -qm "Add calc"
+fi
+
+# aerc refuses an accounts.conf readable by others.
+umask 077
+cat > "$sandbox/accounts.conf" <<CONF
+[taylmail]
+source   = maildir://$sandbox/Maildir
+default  = INBOX
+from     = You <you@example.com>
+outgoing = $root/.venv/bin/taylmail u2a
+CONF
+
+cat > "$sandbox/aerc.conf" <<CONF
+[ui]
+threading-enabled = true
+show-thread-context = true
+
+[compose]
+address-book-cmd =
+
+[filters]
+text/plain = colorize
+.headers = colorize
+CONF
+
+exec aerc -I -C "$sandbox/aerc.conf" -A "$sandbox/accounts.conf" "$@"

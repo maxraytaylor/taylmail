@@ -37,6 +37,16 @@ python3 -m venv .venv
 .venv/bin/pip install -e .
 ```
 
+## Try it
+
+```nu
+dev/aerc           # or: dev/aerc --reset   to start from scratch
+```
+
+This starts aerc against a sandbox in `dev/sandbox/`, which holds a Maildir,
+the taylmail state and a small repo with a bug in it. Your own aerc config is
+not touched. To start, compose to `claude@taylmail.localhost`.
+
 ## aerc account
 
 `~/.config/aerc/accounts.conf`:

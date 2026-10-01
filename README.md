@@ -61,7 +61,7 @@ needs a dotted domain: `git send-email` rejects `you@localhost`.
 | `TAYLMAIL_HOME` | `~/.local/share/taylmail` | state, spool, per-session logs |
 | `TAYLMAIL_DOMAIN` | `taylmail.localhost` | domain of the agent's address |
 | `TAYLMAIL_CLAUDE` | `claude` on `PATH` | CLI the SDK drives (the pip-bundled one doesn't run on NixOS) |
-| `TAYLMAIL_PERMISSION_MODE` | `acceptEdits` | SDK permission mode; `git` is always allowed |
+| `TAYLMAIL_PERMISSION_MODE` | `auto` | SDK permission mode; `auto` lets a classifier approve each tool call. `git` is always allowed |
 | `TAYLMAIL_MODEL` | CLI default | |
 
 The working directory is fixed when a session starts, and later replies keep
@@ -82,8 +82,8 @@ tail -f ~/.local/share/taylmail/logs/*.log
 
 - Only one turn runs per session at a time. A second reply waits for the
   first to finish.
-- In `acceptEdits` mode, Bash commands other than `git`/`taylmail` are
-  denied, so the agent can't run tests. Set
-  `TAYLMAIL_PERMISSION_MODE=bypassPermissions` if you trust it in that repo.
+- Nobody is there to answer permission prompts, so any tool call the `auto`
+  classifier denies stays denied. If the agent sent nothing that turn, the
+  denial is listed in its reply.
 - Only the `text/plain` part of your mail is passed to the agent.
   Attachments are ignored.

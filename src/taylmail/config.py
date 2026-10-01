@@ -36,6 +36,6 @@ def load() -> Config:
         claude_cli=env("TAYLMAIL_CLAUDE")
         or shutil.which("claude")
         or "/run/current-system/sw/bin/claude",
-        permission_mode=env("TAYLMAIL_PERMISSION_MODE", "acceptEdits"),
+        permission_mode=env("TAYLMAIL_PERMISSION_MODE", "auto"),
         model=env("TAYLMAIL_MODEL"),
     )

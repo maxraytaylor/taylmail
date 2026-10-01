@@ -39,6 +39,7 @@ def deliver(cfg: Config, msg: EmailMessage, *, session_id: str | None, seen: boo
     if not msg["Date"]:
         msg["Date"] = formatdate(localtime=True)
 
+    cfg.maildir.parent.mkdir(parents=True, exist_ok=True)
     box = mailbox.Maildir(cfg.maildir, create=True)
     mmsg = mailbox.MaildirMessage(msg.as_bytes())
     if seen:

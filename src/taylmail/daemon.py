@@ -2,14 +2,15 @@
 
 Adapters queue user messages into the inbox; the scheduler runs one turn per
 session at a time, batching whatever arrived while the previous turn ran.
-Nothing polls: IMAP IDLE, Open WebUI and a2u (over a Unix socket) wake us.
+Nothing polls: IMAP IDLE, the Open WebUI pipe and a2u (over a Unix socket)
+wake us.
 """
 
 import asyncio
 import logging
 from email.message import EmailMessage
 
-from . import agent, inbox, mail
+from . import agent, chat, inbox, mail
 from .config import Config
 from .inbox import Job
 from .store import Store
@@ -25,7 +26,11 @@ class Daemon:
         self.outbox_lock = asyncio.Lock()  # one drain at a time, or mail goes out twice
         self.busy: set[str] = set()
         self.tasks: set[asyncio.Task] = set()  # keep running turns referenced
-        self.chat = None
+        self.chat_on = bool(cfg.chat_api_key_file)
+        self.waiters: dict[str, asyncio.Queue] = {}  # chat job file -> its /turn stream
+        self.live: dict[str, asyncio.Queue] = {}  # session -> stream of its running turn
+        self.notes: dict[str, list[str]] = {}  # session -> notices for its turn's event
+        self.events_ready = asyncio.Event()
 
     def wake(self) -> None:
         self.wakeup.set()
@@ -34,12 +39,12 @@ class Daemon:
     async def main(self) -> None:
         cfg = self.cfg
         tasks = [self.scheduler(), self.outbox_loop(), self.imap_loop(), self.wake_socket()]
-        if cfg.chat_api_key_file:
+        if self.chat_on:
             tasks.append(self.serve_chat())
         log.info(
             "serving %s: mail %s, chat %s", cfg.address,
             f"IMAP {cfg.imap.host}:{cfg.imap.port}",
-            cfg.chat_listen if cfg.chat_api_key_file else "off",
+            cfg.chat_listen if self.chat_on else "off",
         )
         await asyncio.gather(*tasks)
 
@@ -79,44 +84,23 @@ class Daemon:
 
     async def serve_chat(self) -> None:
         import uvicorn
-        from fastapi import FastAPI
-        from oix.client import APIError
-        from oix.fastapi import create_router
 
-        from . import chat
-        from .chat import Chat, make_app
+        from .chat import make_server
 
-        app = make_app(self.cfg, self.wake)
-        self.chat = Chat(app)
-        server = FastAPI()
-        server.include_router(create_router(app, path="/events"))
-        catching_up = set()
-
-        async def catch_up(installation_id: str) -> None:
-            for attempt in range(10):
-                try:
-                    return await chat.catch_up(self.cfg, self.wake, app.client(installation_id))
-                except APIError as e:
-                    # Open WebUI serves requests only after it has our app:ready reply.
-                    if e.status == 503 and attempt < 9:
-                        await asyncio.sleep(1)
-                        continue
-                    log.warning("chat catch-up failed: %s", e)
-                except Exception as e:
-                    log.warning("chat catch-up failed: %s", e)
-                return
-
-        def connected(installation_id: str) -> None:
-            task = asyncio.create_task(catch_up(installation_id))
-            catching_up.add(task)
-            task.add_done_callback(catching_up.discard)
-
-        chat.on_ready(app, connected)
         host, _, port = self.cfg.chat_listen.rpartition(":")
         config = uvicorn.Config(
-            server, host=host, port=int(port), ws_max_size=16 * 1024 * 1024, log_level="warning"
+            make_server(self.cfg, self), host=host, port=int(port), log_level="warning"
         )
         await uvicorn.Server(config).serve()
+
+    def event(self, sid: str, reply: str, user: str | None = None, title: str = "") -> None:
+        chat.put_event(self.cfg, sid, reply, user, title)
+        self.events_ready.set()
+
+    def stream(self, sid: str) -> asyncio.Queue | None:
+        """The /turn stream of the session's running turn, if still connected."""
+        queue = self.live.get(sid)
+        return queue if queue in self.waiters.values() else None
 
     async def outbox_loop(self) -> None:
         while True:
@@ -137,10 +121,16 @@ class Daemon:
             if sid:
                 by_session.setdefault(sid, []).append(msg)
         for sid, msgs in by_session.items():
-            target = (Store(self.cfg.home).session(sid) or {}).get("chat")
-            if target and self.chat:
-                lines = "\n".join(f"- {m['Subject']}" for m in msgs)
-                await self._post(target, f"📧 Sent to your inbox:\n{lines}")
+            if not self.chat_on:
+                continue
+            lines = "\n".join(f"- {m['Subject']}" for m in msgs)
+            note = f"📧 Sent to your inbox:\n{lines}"
+            if queue := self.stream(sid):
+                queue.put_nowait({"content": note + "\n\n"})
+            elif sid in self.busy:
+                self.notes.setdefault(sid, []).append(note)
+            elif (Store(self.cfg.home).session(sid) or {}).get("chat"):
+                self.event(sid, note)
 
     # --- turns ---------------------------------------------------------------
 
@@ -160,20 +150,22 @@ class Daemon:
         try:
             emails = [j for j in jobs if j.source == "email"]
             chats = [j for j in jobs if j.source == "chat"]
-            status = None
-            if chats and self.chat:
-                try:
-                    status = await self.chat.status(chats[-1].chat)
-                except Exception as e:
-                    log.warning("chat status failed: %s", e)
+            queue = self.waiters.get(chats[-1].path.name) if chats else None
+            if queue:
+                self.live[sid] = queue
+                for job in emails:
+                    queue.put_nowait({"content": f"📧 Also answering your mail: {job.email.get('subject')}\n\n"})
+
+            async def progress(line: str) -> None:
+                if q := self.stream(sid):
+                    q.put_nowait({"status": line})
+
             log.info("session %s: turn with %d message(s)", sid, len(jobs))
 
             sent_before = (store.session(sid) or {}).get("sent", 0)
             error = None
             try:
-                result = await agent.run_turn(
-                    cfg, sid, jobs, progress=status.progress if status else None
-                )
+                result = await agent.run_turn(cfg, sid, jobs, progress=progress)
             except Exception as e:  # tell the user rather than failing silently
                 result, error = None, f"{type(e).__name__}: {e}"
             await self.flush_outbox()
@@ -195,12 +187,11 @@ class Daemon:
             if emails and body.strip() and (error or not sent):
                 reply = mail.reply_to(cfg, emails[-1].email, sid, body)
                 await asyncio.to_thread(mail.send, cfg, reply, session_id=sid)
-            if chats:
-                content = body.strip() or "Done."
-                if status:
-                    await status.done(content)
-                else:
-                    await self._post(chats[-1].chat, content)
+            if self.chat_on:
+                self.reply_in_chat(sid, emails, chats, body.strip() or "Done.")
+            else:
+                self.notes.pop(sid, None)
+            self.live.pop(sid, None)
 
             for job in jobs:
                 job.path.unlink(missing_ok=True)
@@ -214,13 +205,24 @@ class Daemon:
             self.busy.discard(sid)
             self.wake()
 
-    async def _post(self, target: dict, content: str) -> None:
-        if not self.chat:
+    def reply_in_chat(self, sid: str, emails: list[Job], chats: list[Job], content: str) -> None:
+        for job in chats[:-1]:
+            if q := self.waiters.get(job.path.name):
+                q.put_nowait({"reply": "Answered below."})
+        if (queue := self.stream(sid)) and chats:
+            self.notes.pop(sid, None)
+            queue.put_nowait({"reply": content})
             return
-        try:
-            await self.chat.post(target, content)
-        except Exception as e:
-            log.warning("chat post failed: %s", e)
+        # Nobody is waiting on this reply, so the pipe writes it into the chat later.
+        user = "\n\n".join(_email_text(j) for j in emails) or None
+        title = emails[0].email.get("subject", "") if emails else ""
+        self.event(sid, "\n\n".join(self.notes.pop(sid, []) + [content]), user, title)
+
+
+def _email_text(job: Job) -> str:
+    """A mail as the chat shows it: subject and body, without the other headers."""
+    body = job.prompt.split("\n\n", 1)[-1]
+    return f"📧 **{job.email.get('subject', '')}**\n\n{body}"
 
 
 def run(cfg: Config) -> int:
@@ -230,8 +232,6 @@ def run(cfg: Config) -> int:
         raise SystemExit("taylmail serve: set TAYLMAIL_IMAP and TAYLMAIL_SMTP")
     if cfg.sender_check not in ("dmarc", "return-path"):
         raise SystemExit("taylmail serve: TAYLMAIL_SENDER_CHECK must be dmarc or return-path")
-    if cfg.chat_api_key_file and not cfg.chat_private_key_file:
-        raise SystemExit("taylmail serve: set TAYLMAIL_CHAT_PRIVATE_KEY_FILE too")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     asyncio.run(Daemon(cfg).main())
     return 0

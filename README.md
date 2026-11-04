@@ -2,41 +2,42 @@
 
 Talk to a Claude Code agent the way you'd talk to a contributor on a mailing
 list. The agent sends patch series and you reply inline in aerc. You can also
-chat with the same agent session in an Open WebUI channel thread.
+chat with the same agent session in Open WebUI, where each chat is a session.
 
 One daemon, `taylmail serve`, owns every session. Adapters queue your
 messages, and the daemon runs one agent turn per session at a time:
 
 ```
 aerc ──SMTP──▶ mail server ──IMAP──▶ ┐
-Open WebUI channel ──Socket.IO──────▶ ┴─▶ inbox spool ─▶ taylmail serve ─▶ agent turn
+Open WebUI chat ──pipe──▶ POST /turn ┴─▶ inbox spool ─▶ taylmail serve ─▶ agent turn
                                                                               │
 aerc ◀──IMAP── mail server ◀──SMTP── outbox ◀── a2u ◀── git send-email ◀──────┘
-Open WebUI thread ◀── status message, final reply, "📧 Sent" notices
+Open WebUI chat ◀── /turn stream: status, "📧 Sent" notices, final reply
+                ◀── pipe ◀── GET /events: mail turns, replies nobody waited for
 ```
 
 - **Sessions.** The agent writes as `Claude <claude+SESSION@domain>`, so
   hitting Reply goes back to that session. If the plus-address gets lost,
   the `In-Reply-To`/`References` headers are looked up in a Message-ID map.
-  Mail to plain `claude@domain` starts a new session. In chat, a top-level
-  channel message starts a session and the agent answers in its thread.
-  Messages in that thread continue the same session.
+  Mail to plain `claude@domain` starts a new session. In Open WebUI, a new
+  chat starts a session and messages in that chat continue it.
+- **Every session has a chat.** Mail that starts a session also starts an
+  Open WebUI chat, titled with its subject. Your mails and the agent's
+  replies show up there, so you can answer either way.
 - **Patches always go by email.** When the agent sends mail, the session's
-  chat thread is told what was sent.
-- **Replies go back where the turn came from.** Messages that arrive while a
-  turn runs are batched into the next turn. If the turn came by email and
-  the agent sent no mail, its final message is mailed back as a reply. Chat
-  messages get their answer in the thread. While a turn runs, a "⏳ Working…"
-  message shows its recent tool calls. When the turn ends, that message
-  becomes the reply.
+  chat is told what was sent.
+- **Replies go back where the turn came from, and to the chat.** Messages
+  that arrive while a turn runs are batched into the next turn. If the turn
+  came by email and the agent sent no mail, its final message is mailed back
+  as a reply. While a chat turn runs, its status line shows the agent's
+  latest tool call.
 - **No polling.** The daemon waits on IMAP IDLE, so it sees your mail as
-  soon as the server has it (this needs Python 3.14). Open WebUI pushes chat
-  messages, and `a2u` wakes the daemon over a Unix socket.
+  soon as the server has it (this needs Python 3.14). The pipe long-polls
+  for mail turns, and `a2u` wakes the daemon over a Unix socket.
 - **Durability.** Adapters write each message into a spool before
-  acknowledging it. IMAP marks a mail seen only after queuing it, and
-  Open WebUI gets its delivery receipt only after the message is queued.
-  Open WebUI sends each chat event only once, so on every connect the
-  daemon reads the channels' recent history and queues what it missed.
+  acknowledging it. IMAP marks a mail seen only after queuing it, and the
+  pipe's request is answered only after the message is queued. What the
+  chat should show waits in an event spool until the pipe has written it.
 
 ## Install
 
@@ -84,40 +85,35 @@ to the login (Postfix: `reject_sender_login_mismatch`), drops `Return-Path`
 headers from submitted mail, and doesn't accept mail from the internet. The agent only ever mails
 `TAYLMAIL_USERS`, whatever addresses it asks for.
 
-## Chat: Open WebUI Channel App
+## Chat: Open WebUI
 
-taylmail serves an Open WebUI [Channel App][apps]. Open WebUI connects to
-the app, so the daemon can stay on your private network.
+taylmail serves a small API that an Open WebUI [pipe function][pipes],
+[`openwebui/taylmail_pipe.py`](openwebui/taylmail_pipe.py), talks to. The
+pipe shows up as a model named after the function. It runs inside Open
+WebUI, so it can write mail turns into your chats.
 
-1. Make the app's keys:
+1. Make an API key and point the daemon at it:
 
    ```nu
    .venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(32))' | save ~/.config/taylmail/chat_api_key
-   .venv/bin/python -c 'from cryptography.hazmat.primitives.asymmetric import ed25519; from cryptography.hazmat.primitives import serialization as s; print(ed25519.Ed25519PrivateKey.generate().private_bytes(s.Encoding.PEM, s.PrivateFormat.PKCS8, s.NoEncryption()).decode())' | save ~/.config/taylmail/chat_key.pem
-   ```
-
-2. Point the daemon at them:
-
-   ```nu
    $env.TAYLMAIL_CHAT_API_KEY_FILE = "~/.config/taylmail/chat_api_key"
-   $env.TAYLMAIL_CHAT_PRIVATE_KEY_FILE = "~/.config/taylmail/chat_key.pem"
    ```
 
-3. Start Open WebUI with `ENABLE_APPS=true` and `ENABLE_CHANNELS=true`.
-   Open WebUI only accepts HTTPS app URLs. For plain HTTP on localhost or
-   a LAN, also set `APP_ALLOWED_PRIVATE_ORIGINS=http://host:8000`.
-4. As an admin, install the app with the URL `http://host:8000/events` and
-   the API key. Grant all three scopes it requests, `channels:read`,
-   `channels:messages:read` and `channels:messages:write`, and connect it.
-   An app installed before taylmail asked for `channels:read` needs that
-   scope granted again.
-5. Add the app to a channel and post a message there.
+2. As an admin, go to Admin Panel → Functions, add a function and paste
+   `openwebui/taylmail_pipe.py` into it. Call it `Claude`, for example.
+3. In the function's valves, set `TAYLMAIL_KEY` to the key, and
+   `TAYLMAIL_URL` if the daemon doesn't listen on `http://127.0.0.1:8000`.
+   Then enable the function.
+4. Start a new chat with the `Claude` model.
 
-Apps can't join direct messages. A channel used only by you works the same
-way. To restrict who can talk to the agent, set `TAYLMAIL_CHAT_USERS` to
-Open WebUI user IDs.
+Only one Open WebUI user talks to the agent and gets the chats that mail
+starts: the `OWNER_EMAIL` valve, or by default the first admin. Temporary
+chats don't work, since they have no ID to tie a session to. The pipe
+collects mail turns while Open WebUI runs and its model list has been
+loaded, e.g. by opening Open WebUI once. Until then they wait in taylmail's
+event spool.
 
-[apps]: https://docs.openwebui.com/features/administration/webhooks/
+[pipes]: https://docs.openwebui.com/features/extensibility/plugin/functions/pipe
 
 ## Settings (environment variables)
 
@@ -133,10 +129,8 @@ Open WebUI user IDs.
 | `TAYLMAIL_MAIL_PASSWORD_FILE` | | IMAP/SMTP password |
 | `TAYLMAIL_POLL_SECONDS` | `15` | IMAP poll interval, only for servers without IDLE or Python before 3.14 |
 | `TAYLMAIL_SENDER_CHECK` | `dmarc` | how to trust your From line; see [Mail server](#mail-server) |
-| `TAYLMAIL_CHAT_LISTEN` | `127.0.0.1:8000` | where the Channel App listens |
-| `TAYLMAIL_CHAT_API_KEY_FILE` | (chat off) | key Open WebUI presents when connecting |
-| `TAYLMAIL_CHAT_PRIVATE_KEY_FILE` | | Ed25519 PEM the app signs with |
-| `TAYLMAIL_CHAT_USERS` | anyone in the channel | comma-separated Open WebUI user IDs |
+| `TAYLMAIL_CHAT_LISTEN` | `127.0.0.1:8000` | where the API for the Open WebUI pipe listens |
+| `TAYLMAIL_CHAT_API_KEY_FILE` | (chat off) | bearer key the pipe presents |
 | `TAYLMAIL_CLAUDE` | `claude` on `PATH` | CLI the SDK drives (the pip-bundled one doesn't run on NixOS) |
 | `TAYLMAIL_PERMISSION_MODE` | `auto` | SDK permission mode; `auto` lets a classifier approve each tool call. `git` is always allowed |
 | `TAYLMAIL_MODEL` | CLI default | |
@@ -149,16 +143,16 @@ keep using it.
 ```nu
 # tests
 .venv/bin/python -m unittest discover tests
-# queued messages and outgoing mail
-ls ~/.local/share/taylmail/inbox ~/.local/share/taylmail/outbox
+# queued messages, outgoing mail and events for the chat
+ls ~/.local/share/taylmail/inbox ~/.local/share/taylmail/outbox ~/.local/share/taylmail/events
 ```
 
 ## Known limits (prototype)
 
 - Nobody is there to answer permission prompts, so any tool call the `auto`
   classifier denies stays denied. The denial is listed in the agent's reply.
-- A session started by email has no chat thread. Its replies go by email
-  only.
+- If you stop a chat turn in Open WebUI, the turn still runs. Its reply
+  shows up in the chat as a new message when it's done.
 - If the daemon dies after a turn but before clearing the turn's messages,
   that turn runs again.
 - Only the `text/plain` part of your mail is passed to the agent.

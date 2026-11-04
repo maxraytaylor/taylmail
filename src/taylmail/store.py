@@ -2,7 +2,7 @@
 
 For email, the plus-address is the primary way to find a session; the
 Message-ID map is the fallback for when a mail client drops it (e.g.
-reply-all to a rewritten To). Chat threads are keyed "channel/root-message".
+reply-all to a rewritten To). Chats are keyed "owui/CHAT_ID".
 """
 
 import fcntl
@@ -35,8 +35,6 @@ class Store:
         state.setdefault("messages", {})
         state.setdefault("sessions", {})
         state.setdefault("threads", {})
-        state.setdefault("chat", {})
-        state.setdefault("chat_names", {})
         return state
 
     def session(self, session_id: str) -> dict | None:
@@ -73,33 +71,3 @@ class Store:
             state["threads"][key] = session_id
             info = state["sessions"].setdefault(session_id, {"sent": 0})
             info["chat"] = chat
-
-    def chat_threads(self, channel_id: str) -> list[str]:
-        """Root message IDs of the channel's session threads."""
-        prefix = channel_id + "/"
-        return [k[len(prefix):] for k in self._read()["threads"] if k.startswith(prefix)]
-
-    def chat_after(self, channel_id: str) -> int | None:
-        """created_at (ns) of the newest message handled in the channel."""
-        return self._read()["chat"].get(channel_id, {}).get("after")
-
-    def chat_seen(self, channel_id: str, message_id: str, created_at: int) -> bool:
-        """Mark a chat message handled. False if it already was."""
-        with self._locked() as state:
-            info = state["chat"].setdefault(channel_id, {"after": created_at, "seen": []})
-            if message_id in info["seen"]:
-                return False
-            info["seen"] = info["seen"][-(SEEN - 1):] + [message_id]
-            info["after"] = max(info["after"], created_at)
-            return True
-
-    def chat_name(self, user_id: str, name: str | None = None) -> str:
-        """Remember an Open WebUI user's name, or recall it."""
-        if name:
-            with self._locked() as state:
-                state["chat_names"][user_id] = name
-            return name
-        return self._read()["chat_names"].get(user_id, user_id)
-
-
-SEEN = 500  # message IDs remembered per channel, against events racing catch-up

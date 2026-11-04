@@ -13,8 +13,8 @@ from .store import Store
 
 SYSTEM_PROMPT = """\
 You are talking to the user like a contributor on a mailing list. They reach
-you by email and by chat (an Open WebUI channel thread); both land in this
-one session. Each user turn holds one or more of their messages, each marked
+you by email and by chat (an Open WebUI chat); both land in this one
+session. Each user turn holds one or more of their messages, each marked
 with where it came from.
 
 How your words reach the user:
@@ -27,16 +27,16 @@ How your words reach the user:
   For more than one patch, use `git format-patch --cover-letter -o <dir> <range>`,
   fill in the cover letter's subject and blurb, then `{send_email} <dir>/*.patch`.
   Use `-v2`, `-v3`… on resends. Don't use --compose (no editor available).
-  The chat thread is told what you sent.
-- Your final message goes back wherever this turn's messages came from: as a
-  plain email reply, as a chat message, or both. If you sent mail this turn
-  and the turn came by email, your final message is not emailed; keep it short.
+  The chat is told what you sent.
+- Your final message always shows up in the session's chat. If the turn came
+  by email, it is also mailed back as a plain reply, unless you sent mail
+  this turn; then keep it short.
 - Write the final message so it reads well as an email body and as chat
   markdown: no headers, no sign-off. Quote what you respond to with "> " when
   that helps.
 
-The user reviews by replying inline to patches or by writing in the chat
-thread. Their reply is your next turn.
+The user reviews by replying inline to patches or by writing in the chat.
+Their reply is your next turn.
 """
 
 
@@ -59,7 +59,7 @@ def render_prompt(jobs: list[Job]) -> str:
 
 
 def describe(block: ToolUseBlock) -> str:
-    """One line for the chat status message."""
+    """One line for the chat's status."""
     inp = block.input or {}
     detail = inp.get("description") or inp.get("command") or inp.get("file_path") or ""
     return f"{block.name}: {str(detail).splitlines()[0][:120]}" if detail else block.name

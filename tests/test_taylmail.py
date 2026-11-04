@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from taylmail import chat, config, inbox, mail
+from taylmail import chat, config, daemon, inbox, mail
 from taylmail.store import Store
 
 SID = "0d1fff3b-bba5-4aac-9877-7841079207bb"
@@ -131,38 +131,41 @@ class TaylmailTest(unittest.TestCase):
         ar = "Authentication-Results: mx.example.net; dkim=pass header.d=evil.org\n"
         self.assertFalse(mail.authenticated(mail.parse(user_mail("x@y.z", extra=ar))))
 
-    def test_chat_thread_links_to_session(self):
-        store = Store(self.cfg.home)
-        target = {"installation_id": "i", "channel_id": "c", "thread_id": "m"}
-        store.link_thread("c/m", SID, target)
-        self.assertEqual(store.thread_session("c/m"), SID)
-        self.assertEqual(store.session(SID)["chat"], target)
+    def test_chat_keeps_one_session_per_chat(self):
+        chat.handle(self.cfg, "c1", "Max", "hi")
+        chat.handle(self.cfg, "c1", "Max", "again")
+        chat.handle(self.cfg, "c2", "Max", "other")
+        jobs = self.queued()
+        self.assertEqual(len({j.session for j in jobs}), 2)
+        self.assertEqual(jobs[0].prompt, "From: Max\n\nhi")
+        self.assertEqual(Store(self.cfg.home).session(jobs[0].session)["chat"], {"chat_id": jobs[0].chat["chat_id"]})
 
-    def test_chat_catches_up_on_missed_messages(self):
-        def msg(id, t, parent=None):
-            author = {"type": "user", "id": "u1"}
-            return {"id": id, "channel_id": "c", "author": author, "content": id,
-                    "parent_id": parent, "created_at": str(t * 10**12)}
+    def test_mail_session_gets_the_chat_it_was_written_to(self):
+        chat.put_event(self.cfg, SID, "reply", user="mail", title="Subject")
+        (event,) = chat.events(self.cfg)
+        self.assertIsNone(event["chat_id"])
+        self.assertTrue(chat.ack(self.cfg, event["id"], "c1"))
+        self.assertEqual(chat.events(self.cfg), [])
+        chat.put_event(self.cfg, SID, "later")
+        self.assertEqual(chat.events(self.cfg)[0]["chat_id"], "c1")
+        chat.handle(self.cfg, "c1", "Max", "hi")
+        (job,) = self.queued()
+        self.assertEqual(job.session, SID)
 
-        class Client:
-            installation_id = "i"
-
-            async def list_channels(self):
-                return [{"id": "c"}]
-
-            async def list_messages(self, channel_id, limit, before, parent_id):
-                # Newest first, like Open WebUI.
-                rows = [m for m in history if m["parent_id"] == parent_id]
-                return {"messages": rows[::-1], "next_cursor": None}
-
-        wake = mock.Mock()
-        history = [msg("old", 1), msg("root", 2)]
-        chat.handle(self.cfg, wake, "i", history[1])
-        history += [msg("reply", 3, parent="root"), msg("new", 4)]
-        asyncio.run(chat.catch_up(self.cfg, wake, Client()))
-        asyncio.run(chat.catch_up(self.cfg, wake, Client()))
-        texts = sorted(j.prompt.rsplit("\n", 1)[-1] for j in self.queued())
-        self.assertEqual(texts, ["new", "reply", "root"])
+    def test_reply_goes_to_waiting_stream_or_spool(self):
+        d = daemon.Daemon(replace(self.cfg, chat_api_key_file=self.tmp / "key"))
+        job = chat.handle(self.cfg, "c1", "Max", "hi")
+        (j,) = self.queued()
+        queue = asyncio.Queue()
+        d.waiters[job.name] = d.live[j.session] = queue
+        d.reply_in_chat(j.session, [], [j], "answer")
+        self.assertEqual(queue.get_nowait(), {"reply": "answer"})
+        self.assertEqual(chat.events(self.cfg), [])
+        del d.waiters[job.name]  # the pipe went away
+        d.notes[j.session] = ["📧 Sent"]
+        d.reply_in_chat(j.session, [], [j], "answer")
+        (event,) = chat.events(self.cfg)
+        self.assertEqual((event["chat_id"], event["reply"]), ("c1", "📧 Sent\n\nanswer"))
 
     def test_server_urls(self):
         p = {"imap": 143, "imaps": 993}

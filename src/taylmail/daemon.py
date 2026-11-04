@@ -2,6 +2,7 @@
 
 Adapters queue user messages into the inbox; the scheduler runs one turn per
 session at a time, batching whatever arrived while the previous turn ran.
+Nothing polls: IMAP IDLE, Open WebUI and a2u (over a Unix socket) wake us.
 """
 
 import asyncio
@@ -20,16 +21,19 @@ class Daemon:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.wakeup = asyncio.Event()
+        self.outbox = asyncio.Event()
+        self.outbox_lock = asyncio.Lock()  # one drain at a time, or mail goes out twice
         self.busy: set[str] = set()
         self.tasks: set[asyncio.Task] = set()  # keep running turns referenced
         self.chat = None
 
     def wake(self) -> None:
         self.wakeup.set()
+        self.outbox.set()
 
     async def main(self) -> None:
         cfg = self.cfg
-        tasks = [self.scheduler(), self.outbox_loop(), self.imap_loop()]
+        tasks = [self.scheduler(), self.outbox_loop(), self.imap_loop(), self.wake_socket()]
         if cfg.chat_api_key_file:
             tasks.append(self.serve_chat())
         log.info(
@@ -42,17 +46,36 @@ class Daemon:
     # --- adapters ------------------------------------------------------------
 
     async def imap_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+
         def handle(raw: bytes) -> None:
             if sid := mail.intake(self.cfg, raw):
                 log.info("mail for session %s", sid)
 
+        def fetched() -> None:
+            loop.call_soon_threadsafe(self.wake)
+
         while True:
             try:
-                if await asyncio.to_thread(mail.imap_fetch, self.cfg, handle):
-                    self.wake()
+                await asyncio.to_thread(mail.imap_watch, self.cfg, handle, fetched)
+                delay = self.cfg.poll_seconds  # the server can't IDLE
             except Exception as e:
-                log.warning("IMAP poll failed: %s", e)
-            await asyncio.sleep(self.cfg.poll_seconds)
+                log.warning("IMAP failed: %s", e)
+                delay = 5
+            await asyncio.sleep(delay)
+
+    async def wake_socket(self) -> None:
+        """a2u connects here after queuing mail."""
+        path = inbox.wake_socket(self.cfg)
+        path.unlink(missing_ok=True)
+
+        async def ping(reader, writer) -> None:
+            self.wake()
+            writer.close()
+
+        server = await asyncio.start_unix_server(ping, path=str(path))
+        async with server:
+            await server.serve_forever()
 
     async def serve_chat(self) -> None:
         import uvicorn
@@ -73,12 +96,14 @@ class Daemon:
 
     async def outbox_loop(self) -> None:
         while True:
+            self.outbox.clear()
             await self.flush_outbox()
-            await asyncio.sleep(1)
+            await self.outbox.wait()
 
     async def flush_outbox(self) -> None:
         try:
-            sent = await asyncio.to_thread(mail.drain_outbox, self.cfg)
+            async with self.outbox_lock:
+                sent = await asyncio.to_thread(mail.drain_outbox, self.cfg)
         except Exception as e:
             log.warning("sending mail failed: %s", e)
             return
@@ -104,11 +129,7 @@ class Daemon:
                     task = asyncio.create_task(self.turn(sid, jobs))
                     self.tasks.add(task)
                     task.add_done_callback(self.tasks.discard)
-            # u2a queues from another process, so also look every second.
-            try:
-                await asyncio.wait_for(self.wakeup.wait(), timeout=1)
-            except TimeoutError:
-                pass
+            await self.wakeup.wait()
 
     async def turn(self, sid: str, jobs: list[Job]) -> None:
         cfg, store = self.cfg, Store(self.cfg.home)

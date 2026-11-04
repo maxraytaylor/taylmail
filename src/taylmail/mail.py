@@ -214,8 +214,7 @@ def _smtp_send(cfg: Config, msg: EmailMessage, rcpts: list[str]) -> None:
         smtp.send_message(msg, from_addr=cfg.address, to_addrs=rcpts)
 
 
-def imap_fetch(cfg: Config, handle) -> int:
-    """Pass each unseen mail in the agent's INBOX to `handle`, then mark it seen."""
+def _imap_connect(cfg: Config) -> imaplib.IMAP4:
     s: Server = cfg.imap
     ctx = ssl.create_default_context()
     if s.tls == "implicit":
@@ -224,16 +223,43 @@ def imap_fetch(cfg: Config, handle) -> int:
         imap = imaplib.IMAP4(s.host, s.port, timeout=60)
         if s.tls == "starttls":
             imap.starttls(ssl_context=ctx)
+    imap.login(_login_user(cfg), _password(cfg))
+    imap.select("INBOX")
+    return imap
+
+
+def _fetch_unseen(imap: imaplib.IMAP4, handle) -> int:
+    """Pass each unseen mail to `handle`, then mark it seen."""
+    _, data = imap.uid("SEARCH", None, "UNSEEN")
+    uids = data[0].split()
+    for uid in uids:
+        _, parts = imap.uid("FETCH", uid, "(BODY.PEEK[])")
+        handle(next(p[1] for p in parts if isinstance(p, tuple)))
+        imap.uid("STORE", uid, "+FLAGS", r"(\Seen)")
+    return len(uids)
+
+
+def imap_watch(cfg: Config, handle, fetched) -> None:
+    """Hand new mail to `handle` as it arrives; call `fetched()` after each batch.
+
+    Waits with IMAP IDLE, so mail is handled as soon as the server has it.
+    Returns when the connection ends, or right away if the server can't IDLE.
+    """
+    imap = _imap_connect(cfg)
     try:
-        imap.login(_login_user(cfg), _password(cfg))
-        imap.select("INBOX")
-        _, data = imap.uid("SEARCH", None, "UNSEEN")
-        uids = data[0].split()
-        for uid in uids:
-            _, parts = imap.uid("FETCH", uid, "(BODY.PEEK[])")
-            handle(next(p[1] for p in parts if isinstance(p, tuple)))
-            imap.uid("STORE", uid, "+FLAGS", r"(\Seen)")
-        return len(uids)
+        while True:
+            imap.response("EXISTS")  # forget arrivals that this search will see
+            if _fetch_unseen(imap, handle):
+                fetched()
+            if imap.response("EXISTS")[1] != [None]:
+                continue  # more arrived while fetching; IDLE wouldn't report it
+            if "IDLE" not in imap.capabilities or not hasattr(imap, "idle"):
+                return  # imaplib has IDLE from Python 3.14
+            # RFC 2177: servers may drop an IDLE after 30 minutes.
+            with imap.idle(duration=29 * 60) as idler:
+                for typ, _ in idler:
+                    if typ == "EXISTS":
+                        break
     finally:
         try:
             imap.logout()

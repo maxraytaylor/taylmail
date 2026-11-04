@@ -8,7 +8,7 @@ the session's chat thread.
 import os
 import sys
 
-from . import mail
+from . import inbox, mail
 from .config import Config
 
 
@@ -17,5 +17,6 @@ def main(cfg: Config, argv: list[str]) -> int:
     # The agent's environment carries its session ID; see agent.py.
     session_id = os.environ.get("TAYLMAIL_SESSION")
     mail.queue_outgoing(cfg, sys.stdin.buffer.read(), recipients, session_id)
+    inbox.wake(cfg)
     print("taylmail a2u: queued", file=sys.stderr)
     return 0

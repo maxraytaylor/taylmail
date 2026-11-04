@@ -29,6 +29,9 @@ Open WebUI thread ◀── status message, final reply, "📧 Sent" notices
   messages get their answer in the thread. While a turn runs, a "⏳ Working…"
   message shows its recent tool calls. When the turn ends, that message
   becomes the reply.
+- **No polling.** The daemon waits on IMAP IDLE, so it sees your mail as
+  soon as the server has it (this needs Python 3.14). Open WebUI pushes chat
+  messages, and `a2u` wakes the daemon over a Unix socket.
 - **Durability.** Adapters write each message into a spool before
   acknowledging it. IMAP marks a mail seen only after queuing it, and
   Open WebUI gets its delivery receipt only after the message is queued.
@@ -119,7 +122,7 @@ Open WebUI user IDs.
 | `TAYLMAIL_SMTP` | (required) | `smtps://`, `smtp://` (STARTTLS) or `smtp+insecure://` |
 | `TAYLMAIL_MAIL_USER` | `TAYLMAIL_ADDRESS` | IMAP/SMTP login |
 | `TAYLMAIL_MAIL_PASSWORD_FILE` | | IMAP/SMTP password |
-| `TAYLMAIL_POLL_SECONDS` | `15` | IMAP poll interval |
+| `TAYLMAIL_POLL_SECONDS` | `15` | IMAP poll interval, only for servers without IDLE or Python before 3.14 |
 | `TAYLMAIL_TRUST_FROM` | off | `1` skips the DMARC/DKIM check (testing only) |
 | `TAYLMAIL_CHAT_LISTEN` | `127.0.0.1:8000` | where the Channel App listens |
 | `TAYLMAIL_CHAT_API_KEY_FILE` | (chat off) | key Open WebUI presents when connecting |
@@ -149,6 +152,5 @@ ls ~/.local/share/taylmail/inbox ~/.local/share/taylmail/outbox
   only.
 - If the daemon dies after a turn but before clearing the turn's messages,
   that turn runs again.
-- IMAP is polled. IDLE would need Python 3.14's `imaplib`.
 - Only the `text/plain` part of your mail is passed to the agent.
   Attachments are ignored.

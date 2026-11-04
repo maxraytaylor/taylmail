@@ -5,6 +5,7 @@ if the daemon dies mid-turn; the turn simply runs again on restart.
 """
 
 import json
+import socket
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,3 +45,17 @@ def pending(cfg: Config) -> dict[str, list[Job]]:
         data = json.loads(path.read_text())
         jobs.setdefault(data["session"], []).append(Job(path=path, **data))
     return jobs
+
+
+def wake_socket(cfg: Config) -> Path:
+    cfg.home.mkdir(parents=True, exist_ok=True)
+    return cfg.home / "wake.sock"
+
+
+def wake(cfg: Config) -> None:
+    """Tell a running daemon to look at its spools now."""
+    try:
+        with socket.socket(socket.AF_UNIX) as s:
+            s.connect(str(wake_socket(cfg)))
+    except OSError:
+        pass  # not running; it looks when it starts

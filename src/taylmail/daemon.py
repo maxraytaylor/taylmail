@@ -89,7 +89,8 @@ class Daemon:
 
         host, _, port = self.cfg.chat_listen.rpartition(":")
         config = uvicorn.Config(
-            make_server(self.cfg, self), host=host, port=int(port), log_level="warning"
+            make_server(self.cfg, self), host=host, port=int(port), log_level="warning",
+            timeout_graceful_shutdown=2,  # don't wait out long polls; turns are spooled
         )
         await uvicorn.Server(config).serve()
 

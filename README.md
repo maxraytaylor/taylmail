@@ -120,11 +120,13 @@ Each conversation is one session.
   `text` from `user` (a display name) for the conversation's session. A new
   conversation starts a session. The response streams one JSON object per
   line until the turn ends:
+  
   - `{"status": "..."}`: the agent's latest tool call
   - `{"content": "..."}`: text to show before the reply, like "📧 Sent" notices
   - `{"reply": "..."}`: the final message; the stream ends here
-
+  
   If the stream breaks, the turn runs on, and its reply becomes an event.
+
 - `GET /events?client=CLIENT&wait=SECONDS` returns
   `{"events": [{"id", "session", "conversation", "title", "user", "reply"}]}`,
   oldest first. It waits up to `wait` seconds (at most 300) for one to
@@ -132,29 +134,30 @@ Each conversation is one session.
   the agent's. `conversation` is null if the session has none in this
   client yet. Then start one, titled `title`, and reuse it for later events
   of the same `session`.
+
 - `POST /events/ID/ack` with `{"client", "conversation"}` drops the event
   once it is shown, and ties the session to `conversation`. Until then, the
   event stays and is returned again.
 
 ## Settings (environment variables)
 
-| Variable | Default | |
-|---|---|---|
-| `TAYLMAIL_USERS` | (required) | your address(es); the only senders read and recipients mailed |
-| `TAYLMAIL_CWD` | current directory | where the agent works; a git repo |
-| `TAYLMAIL_ADDRESS` | `claude@taylmail.localhost` | the agent's address; sessions use `local+SESSION@domain` |
-| `TAYLMAIL_HOME` | `~/.local/share/taylmail` | state and spools |
-| `TAYLMAIL_IMAP` | (required) | `imaps://host[:port]`, `imap://` (STARTTLS) or `imap+insecure://` |
-| `TAYLMAIL_SMTP` | (required) | `smtps://`, `smtp://` (STARTTLS) or `smtp+insecure://` |
-| `TAYLMAIL_MAIL_USER` | `TAYLMAIL_ADDRESS` | IMAP/SMTP login |
-| `TAYLMAIL_MAIL_PASSWORD_FILE` | | IMAP/SMTP password |
-| `TAYLMAIL_POLL_SECONDS` | `15` | IMAP poll interval, only for servers without IDLE or Python before 3.14 |
-| `TAYLMAIL_SENDER_CHECK` | `dmarc` | how to trust your From line; see [Mail server](#mail-server) |
-| `TAYLMAIL_CHAT_LISTEN` | `127.0.0.1:8000` | where the [chat API](#chat-api) listens |
-| `TAYLMAIL_CHAT_API_KEY_FILE` | (chat off) | bearer key adapters present |
-| `TAYLMAIL_CLAUDE` | `claude` on `PATH` | CLI the SDK drives (the pip-bundled one doesn't run on NixOS) |
-| `TAYLMAIL_PERMISSION_MODE` | `auto` | SDK permission mode; `auto` lets a classifier approve each tool call. `git` is always allowed |
-| `TAYLMAIL_MODEL` | CLI default | |
+| Variable                      | Default                     |                                                                                               |
+| ----------------------------- | --------------------------- | --------------------------------------------------------------------------------------------- |
+| `TAYLMAIL_USERS`              | (required)                  | your address(es); the only senders read and recipients mailed                                 |
+| `TAYLMAIL_CWD`                | current directory           | where the agent works; a git repo                                                             |
+| `TAYLMAIL_ADDRESS`            | `claude@taylmail.localhost` | the agent's address; sessions use `local+SESSION@domain`                                      |
+| `TAYLMAIL_HOME`               | `~/.local/share/taylmail`   | state and spools                                                                              |
+| `TAYLMAIL_IMAP`               | (required)                  | `imaps://host[:port]`, `imap://` (STARTTLS) or `imap+insecure://`                             |
+| `TAYLMAIL_SMTP`               | (required)                  | `smtps://`, `smtp://` (STARTTLS) or `smtp+insecure://`                                        |
+| `TAYLMAIL_MAIL_USER`          | `TAYLMAIL_ADDRESS`          | IMAP/SMTP login                                                                               |
+| `TAYLMAIL_MAIL_PASSWORD_FILE` |                             | IMAP/SMTP password                                                                            |
+| `TAYLMAIL_POLL_SECONDS`       | `15`                        | IMAP poll interval, only for servers without IDLE or Python before 3.14                       |
+| `TAYLMAIL_SENDER_CHECK`       | `dmarc`                     | how to trust your From line; see [Mail server](#mail-server)                                  |
+| `TAYLMAIL_CHAT_LISTEN`        | `127.0.0.1:8000`            | where the [chat API](#chat-api) listens                                                       |
+| `TAYLMAIL_CHAT_API_KEY_FILE`  | (chat off)                  | bearer key adapters present                                                                   |
+| `TAYLMAIL_CLAUDE`             | `claude` on `PATH`          | CLI the SDK drives (the pip-bundled one doesn't run on NixOS)                                 |
+| `TAYLMAIL_PERMISSION_MODE`    | `auto`                      | SDK permission mode; `auto` lets a classifier approve each tool call. `git` is always allowed |
+| `TAYLMAIL_MODEL`              | CLI default                 |                                                                                               |
 
 The working directory is fixed when a session starts, and later messages
 keep using it.

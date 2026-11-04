@@ -42,8 +42,20 @@ chat frontend ◀── /turn stream: status, "📧 Sent" notices, final reply
 
 ## Install
 
+With Nix, the flake's package brings Claude Code and git send-email along:
+
 ```nu
-cd ~/src/vibetaylmail
+nix run github:OWNER/taylmail -- serve
+```
+
+In a NixOS configuration, add the flake as an input and use
+`inputs.taylmail.packages.${system}.default`, or `pkgs.taylmail` with
+`inputs.taylmail.overlays.default`. Claude Code is unfree, so the overlay
+needs it allowed.
+
+Without Nix:
+
+```nu
 python3 -m venv .venv
 .venv/bin/pip install -e .
 ```

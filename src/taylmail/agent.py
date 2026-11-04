@@ -2,6 +2,7 @@
 
 import os
 import shlex
+import shutil
 import sys
 from pathlib import Path
 
@@ -40,8 +41,14 @@ Their reply is your next turn.
 """
 
 
+def taylmail_bin() -> Path:
+    """The taylmail command: next to a venv's python, or on PATH as Nix installs it."""
+    beside = Path(sys.executable).with_name("taylmail")
+    return beside if beside.exists() else Path(shutil.which("taylmail") or beside)
+
+
 def send_email_cmd(cfg: Config, session_id: str, user: str, in_reply_to: str | None) -> str:
-    taylmail = Path(sys.executable).with_name("taylmail")
+    taylmail = taylmail_bin()
     args = [
         "git", "send-email",
         f"--sendmail-cmd={shlex.quote(str(taylmail))} a2u",
@@ -72,7 +79,7 @@ async def run_turn(cfg: Config, session_id: str, jobs: list[Job], progress=None)
     cwd = info.get("cwd", str(cfg.cwd))
     user = cfg.user or info.get("user")
 
-    bin_dir = str(Path(sys.executable).parent)
+    bin_dir = str(taylmail_bin().parent)
     options = ClaudeAgentOptions(
         cli_path=cfg.claude_cli,
         cwd=cwd,

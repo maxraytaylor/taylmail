@@ -80,14 +80,38 @@ class Daemon:
     async def serve_chat(self) -> None:
         import uvicorn
         from fastapi import FastAPI
+        from oix.client import APIError
         from oix.fastapi import create_router
 
+        from . import chat
         from .chat import Chat, make_app
 
         app = make_app(self.cfg, self.wake)
         self.chat = Chat(app)
         server = FastAPI()
         server.include_router(create_router(app, path="/events"))
+        catching_up = set()
+
+        async def catch_up(installation_id: str) -> None:
+            for attempt in range(10):
+                try:
+                    return await chat.catch_up(self.cfg, self.wake, app.client(installation_id))
+                except APIError as e:
+                    # Open WebUI serves requests only after it has our app:ready reply.
+                    if e.status == 503 and attempt < 9:
+                        await asyncio.sleep(1)
+                        continue
+                    log.warning("chat catch-up failed: %s", e)
+                except Exception as e:
+                    log.warning("chat catch-up failed: %s", e)
+                return
+
+        def connected(installation_id: str) -> None:
+            task = asyncio.create_task(catch_up(installation_id))
+            catching_up.add(task)
+            task.add_done_callback(catching_up.discard)
+
+        chat.on_ready(app, connected)
         host, _, port = self.cfg.chat_listen.rpartition(":")
         config = uvicorn.Config(
             server, host=host, port=int(port), ws_max_size=16 * 1024 * 1024, log_level="warning"

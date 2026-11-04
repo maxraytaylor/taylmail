@@ -11,6 +11,7 @@ import time
 import uuid
 
 from oix import App
+from oix.socket import NAMESPACE
 
 from . import inbox
 from .config import Config
@@ -20,6 +21,7 @@ log = logging.getLogger("taylmail.chat")
 
 MENTION = re.compile(r"<@A:[^|>]+\|([^>]*)>")
 MAX_CONTENT = 32_000  # Open WebUI's message limit
+RACE_NS = 60 * 10**9
 
 
 def make_app(cfg: Config, wake) -> App:
@@ -28,7 +30,7 @@ def make_app(cfg: Config, wake) -> App:
         manifest_id="taylmail",
         name="Claude",
         description="A Claude Code agent you can also reach by email.",
-        scopes=["channels:messages:read", "channels:messages:write"],
+        scopes=["channels:read", "channels:messages:read", "channels:messages:write"],
         api_key=cfg.chat_api_key_file.read_text().strip(),
         private_key=cfg.chat_private_key_file.read_text(),
     )
@@ -36,34 +38,89 @@ def make_app(cfg: Config, wake) -> App:
     # background=False: queue durably before Open WebUI gets its receipt.
     @app.on("channel.message.created", background=False)
     async def on_message(event):
-        msg = event.message or {}
-        author = msg.get("author") or {}
-        if author.get("type") != "user":
-            return
-        if cfg.chat_users and author.get("id") not in cfg.chat_users:
-            log.warning("ignoring Open WebUI user %s: not in TAYLMAIL_CHAT_USERS", author.get("id"))
-            return
-        text = MENTION.sub(r"@\1", event.content or "").strip()
-        if not text:
-            return
-        root = event.parent_id or event.message_id
-        key = f"{event.channel_id}/{root}"
-        store = Store(cfg.home)
-        session_id = store.thread_session(key)
-        if session_id is None:
-            session_id = str(uuid.uuid4())
-            store.update_session(session_id, started=False, cwd=str(cfg.cwd))
-        target = {
-            "installation_id": event.installation_id,
-            "channel_id": event.channel_id,
-            "thread_id": root,
-        }
-        store.link_thread(key, session_id, target)
-        name = (event.actor or {}).get("name") or author.get("id")
-        inbox.put(cfg, session_id, "chat", f"From: {name}\n\n{text}", chat=target)
-        wake()
+        handle(cfg, wake, event.installation_id, event.message or {}, (event.actor or {}).get("name"))
 
     return app
+
+
+def handle(cfg: Config, wake, installation_id: str, msg: dict, name: str | None = None) -> bool:
+    """Queue a channel message for its thread's session; False if skipped."""
+    author = msg.get("author") or {}
+    if author.get("type") != "user":
+        return False
+    if cfg.chat_users and author.get("id") not in cfg.chat_users:
+        log.warning("ignoring Open WebUI user %s: not in TAYLMAIL_CHAT_USERS", author.get("id"))
+        return False
+    text = MENTION.sub(r"@\1", msg.get("content") or "").strip()
+    if not text:
+        return False
+    channel = msg["channel_id"]
+    store = Store(cfg.home)
+    if not store.chat_seen(channel, msg["id"], int(msg["created_at"])):
+        return False
+    root = msg.get("parent_id") or msg["id"]
+    key = f"{channel}/{root}"
+    session_id = store.thread_session(key)
+    if session_id is None:
+        session_id = str(uuid.uuid4())
+        store.update_session(session_id, started=False, cwd=str(cfg.cwd))
+    target = {"installation_id": installation_id, "channel_id": channel, "thread_id": root}
+    store.link_thread(key, session_id, target)
+    name = store.chat_name(author["id"], name)
+    inbox.put(cfg, session_id, "chat", f"From: {name}\n\n{text}", chat=target)
+    wake()
+    return True
+
+
+async def catch_up(cfg: Config, wake, client) -> None:
+    """Queue messages posted while we were away; Open WebUI sends each event once."""
+    store = Store(cfg.home)
+    missed = []
+    for channel in await client.list_channels():
+        cid = channel["id"]
+        after = store.chat_after(cid)
+        if after is None:
+            continue  # nothing handled here yet, so no history to answer
+        top = await _since(client, cid, None, after)
+        missed += top
+        for root in {m["id"] for m in top} | set(store.chat_threads(cid)):
+            missed += await _since(client, cid, root, after)
+    queued = sum(
+        handle(cfg, wake, client.installation_id, msg)
+        for msg in sorted(missed, key=lambda m: int(m["created_at"]))
+    )
+    if queued:
+        log.info("caught up on %d chat messages", queued)
+
+
+async def _since(client, channel_id: str, parent_id: str | None, after: int) -> list[dict]:
+    """Messages newer than `after`, less a margin for events that raced each other."""
+    found, before = [], None
+    while True:
+        page = await client.list_messages(channel_id, limit=100, before=before, parent_id=parent_id)
+        for msg in page["messages"]:
+            if int(msg["created_at"]) < after - RACE_NS:
+                return found
+            found.append(msg)
+        if not (before := page["next_cursor"]):
+            return found
+
+
+def on_ready(app: App, callback) -> None:
+    """Call `callback(installation_id)` each time Open WebUI connects.
+
+    oix 0.8 has no hook for this, so wrap its socket's app:ready handler.
+    """
+    sock = app._socket
+    ready = sock.ready
+
+    async def wrapped(sid, data):
+        result = await ready(sid, data)
+        if result.get("status") == 200:
+            callback(sock.peers[sid]["installation_id"])
+        return result
+
+    sock.server.on("app:ready", wrapped, namespace=NAMESPACE)
 
 
 class Chat:

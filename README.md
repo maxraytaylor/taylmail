@@ -35,6 +35,8 @@ Open WebUI thread ◀── status message, final reply, "📧 Sent" notices
 - **Durability.** Adapters write each message into a spool before
   acknowledging it. IMAP marks a mail seen only after queuing it, and
   Open WebUI gets its delivery receipt only after the message is queued.
+  Open WebUI sends each chat event only once, so on every connect the
+  daemon reads the channels' recent history and queues what it missed.
 
 ## Install
 
@@ -105,8 +107,10 @@ the app, so the daemon can stay on your private network.
    Open WebUI only accepts HTTPS app URLs. For plain HTTP on localhost or
    a LAN, also set `APP_ALLOWED_PRIVATE_ORIGINS=http://host:8000`.
 4. As an admin, install the app with the URL `http://host:8000/events` and
-   the API key. Grant both scopes it requests,
+   the API key. Grant all three scopes it requests, `channels:read`,
    `channels:messages:read` and `channels:messages:write`, and connect it.
+   An app installed before taylmail asked for `channels:read` needs that
+   scope granted again.
 5. Add the app to a channel and post a message there.
 
 Apps can't join direct messages. A channel used only by you works the same

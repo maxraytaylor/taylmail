@@ -1,12 +1,13 @@
 """Run with: .venv/bin/python -m unittest discover tests"""
 
+import asyncio
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from taylmail import config, inbox, mail
+from taylmail import chat, config, inbox, mail
 from taylmail.store import Store
 
 SID = "0d1fff3b-bba5-4aac-9877-7841079207bb"
@@ -136,6 +137,32 @@ class TaylmailTest(unittest.TestCase):
         store.link_thread("c/m", SID, target)
         self.assertEqual(store.thread_session("c/m"), SID)
         self.assertEqual(store.session(SID)["chat"], target)
+
+    def test_chat_catches_up_on_missed_messages(self):
+        def msg(id, t, parent=None):
+            author = {"type": "user", "id": "u1"}
+            return {"id": id, "channel_id": "c", "author": author, "content": id,
+                    "parent_id": parent, "created_at": str(t * 10**12)}
+
+        class Client:
+            installation_id = "i"
+
+            async def list_channels(self):
+                return [{"id": "c"}]
+
+            async def list_messages(self, channel_id, limit, before, parent_id):
+                # Newest first, like Open WebUI.
+                rows = [m for m in history if m["parent_id"] == parent_id]
+                return {"messages": rows[::-1], "next_cursor": None}
+
+        wake = mock.Mock()
+        history = [msg("old", 1), msg("root", 2)]
+        chat.handle(self.cfg, wake, "i", history[1])
+        history += [msg("reply", 3, parent="root"), msg("new", 4)]
+        asyncio.run(chat.catch_up(self.cfg, wake, Client()))
+        asyncio.run(chat.catch_up(self.cfg, wake, Client()))
+        texts = sorted(j.prompt.rsplit("\n", 1)[-1] for j in self.queued())
+        self.assertEqual(texts, ["new", "reply", "root"])
 
     def test_server_urls(self):
         p = {"imap": 143, "imaps": 993}

@@ -2,7 +2,8 @@
 
 For email, the plus-address is the primary way to find a session; the
 Message-ID map is the fallback for when a mail client drops it (e.g.
-reply-all to a rewritten To). Chats are keyed "owui/CHAT_ID".
+reply-all to a rewritten To). Chat conversations are keyed
+"CLIENT/CONVERSATION".
 """
 
 import fcntl

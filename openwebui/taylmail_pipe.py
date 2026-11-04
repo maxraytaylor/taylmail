@@ -22,6 +22,8 @@ from open_webui.models.users import Users
 
 log = logging.getLogger("taylmail.pipe")
 
+CLIENT = "openwebui"  # how taylmail tells our conversations from other frontends
+
 # Open WebUI loads this file anew on every change, so state outlives modules here.
 _STATE = sys.modules.setdefault("taylmail_pipe_state", types.ModuleType("taylmail_pipe_state"))
 FUNCTION_ID = __name__.removeprefix("function_")[:-33]  # function_{id}_{uuid hex}
@@ -64,7 +66,7 @@ class Pipe:
         timeout = aiohttp.ClientTimeout(total=None, sock_read=None)
         async with aiohttp.ClientSession(timeout=timeout, headers=_auth(self.valves)) as session:
             url = self.valves.TAYLMAIL_URL.rstrip("/") + "/turn"
-            async with session.post(url, json={"chat_id": chat_id, "user": user, "text": text}) as r:
+            async with session.post(url, json={"client": CLIENT, "conversation": chat_id, "user": user, "text": text}) as r:
                 r.raise_for_status()
                 async for line in r.content:
                     item = json.loads(line)
@@ -128,7 +130,7 @@ async def _poll() -> None:
                 continue
             base = valves.TAYLMAIL_URL.rstrip("/")
             async with aiohttp.ClientSession(headers=_auth(valves)) as session:
-                async with session.get(f"{base}/events", params={"wait": "60"},
+                async with session.get(f"{base}/events", params={"client": CLIENT, "wait": "60"},
                                        timeout=aiohttp.ClientTimeout(total=90)) as r:
                     r.raise_for_status()
                     events = (await r.json())["events"]
@@ -140,7 +142,7 @@ async def _poll() -> None:
                     for event in events:
                         chat_id = await _deliver(valves, event, chats.get(event["session"]))
                         async with session.post(f"{base}/events/{event['id']}/ack",
-                                                json={"chat_id": chat_id}) as r:
+                                                json={"client": CLIENT, "conversation": chat_id}) as r:
                             r.raise_for_status()
                         chats[event["session"]] = chat_id
         except asyncio.CancelledError:
@@ -152,7 +154,7 @@ async def _poll() -> None:
 
 async def _deliver(valves, event: dict, made: str | None) -> str:
     """Write an event into its session's chat, or a new one; returns the chat ID."""
-    chat_id = event.get("chat_id") or made
+    chat_id = event.get("conversation") or made
     chat = await Chats.get_chat_by_id(chat_id) if chat_id else None
     now = int(time.time())
     messages = []

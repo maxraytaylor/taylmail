@@ -132,40 +132,41 @@ class TaylmailTest(unittest.TestCase):
         self.assertFalse(mail.authenticated(mail.parse(user_mail("x@y.z", extra=ar))))
 
     def test_chat_keeps_one_session_per_chat(self):
-        chat.handle(self.cfg, "c1", "Max", "hi")
-        chat.handle(self.cfg, "c1", "Max", "again")
-        chat.handle(self.cfg, "c2", "Max", "other")
+        chat.handle(self.cfg, "web", "c1", "Max", "hi")
+        chat.handle(self.cfg, "web", "c1", "Max", "again")
+        chat.handle(self.cfg, "web", "c2", "Max", "other")
         jobs = self.queued()
         self.assertEqual(len({j.session for j in jobs}), 2)
         self.assertEqual(jobs[0].prompt, "From: Max\n\nhi")
-        self.assertEqual(Store(self.cfg.home).session(jobs[0].session)["chat"], {"chat_id": jobs[0].chat["chat_id"]})
+        self.assertEqual(Store(self.cfg.home).session(jobs[0].session)["chat"], jobs[0].chat)
 
     def test_mail_session_gets_the_chat_it_was_written_to(self):
         chat.put_event(self.cfg, SID, "reply", user="mail", title="Subject")
-        (event,) = chat.events(self.cfg)
-        self.assertIsNone(event["chat_id"])
-        self.assertTrue(chat.ack(self.cfg, event["id"], "c1"))
-        self.assertEqual(chat.events(self.cfg), [])
+        (event,) = chat.events(self.cfg, "web")
+        self.assertIsNone(event["conversation"])
+        self.assertTrue(chat.ack(self.cfg, event["id"], "web", "c1"))
+        self.assertEqual(chat.events(self.cfg, "web"), [])
         chat.put_event(self.cfg, SID, "later")
-        self.assertEqual(chat.events(self.cfg)[0]["chat_id"], "c1")
-        chat.handle(self.cfg, "c1", "Max", "hi")
+        self.assertEqual(chat.events(self.cfg, "web")[0]["conversation"], "c1")
+        self.assertIsNone(chat.events(self.cfg, "tui")[0]["conversation"])
+        chat.handle(self.cfg, "web", "c1", "Max", "hi")
         (job,) = self.queued()
         self.assertEqual(job.session, SID)
 
     def test_reply_goes_to_waiting_stream_or_spool(self):
         d = daemon.Daemon(replace(self.cfg, chat_api_key_file=self.tmp / "key"))
-        job = chat.handle(self.cfg, "c1", "Max", "hi")
+        job = chat.handle(self.cfg, "web", "c1", "Max", "hi")
         (j,) = self.queued()
         queue = asyncio.Queue()
         d.waiters[job.name] = d.live[j.session] = queue
         d.reply_in_chat(j.session, [], [j], "answer")
         self.assertEqual(queue.get_nowait(), {"reply": "answer"})
-        self.assertEqual(chat.events(self.cfg), [])
+        self.assertEqual(chat.events(self.cfg, "web"), [])
         del d.waiters[job.name]  # the pipe went away
         d.notes[j.session] = ["📧 Sent"]
         d.reply_in_chat(j.session, [], [j], "answer")
-        (event,) = chat.events(self.cfg)
-        self.assertEqual((event["chat_id"], event["reply"]), ("c1", "📧 Sent\n\nanswer"))
+        (event,) = chat.events(self.cfg, "web")
+        self.assertEqual((event["conversation"], event["reply"]), ("c1", "📧 Sent\n\nanswer"))
 
     def test_server_urls(self):
         p = {"imap": 143, "imaps": 993}

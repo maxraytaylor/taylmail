@@ -1,9 +1,9 @@
 [project]
 name = "taylmail"
 version = "0.1.0"
-description = "Talk to a Claude Code agent over email: patch series out, replies in."
+description = "Talk to a Claude Code agent over email and Open WebUI chat: patch series out, replies in."
 requires-python = ">=3.11"
-dependencies = ["claude-agent-sdk>=0.2.163"]
+dependencies = ["claude-agent-sdk>=0.2.163", "oix[fastapi]>=0.8", "uvicorn>=0.30"]
 
 [project.scripts]
 taylmail = "taylmail.cli:main"

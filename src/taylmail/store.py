@@ -1,7 +1,8 @@
-"""Tiny JSON state file: which Message-ID belongs to which session.
+"""Tiny JSON state file: which Message-ID or chat thread belongs to which session.
 
-The plus-address is the primary way to find a session; this map is the
-fallback for when a mail client drops it (e.g. reply-all to a rewritten To).
+For email, the plus-address is the primary way to find a session; the
+Message-ID map is the fallback for when a mail client drops it (e.g.
+reply-all to a rewritten To). Chat threads are keyed "channel/root-message".
 """
 
 import fcntl
@@ -33,6 +34,7 @@ class Store:
             state = {}
         state.setdefault("messages", {})
         state.setdefault("sessions", {})
+        state.setdefault("threads", {})
         return state
 
     def session(self, session_id: str) -> dict | None:
@@ -59,3 +61,13 @@ class Store:
             if mid in messages:
                 return messages[mid]
         return None
+
+    def thread_session(self, key: str) -> str | None:
+        return self._read()["threads"].get(key)
+
+    def link_thread(self, key: str, session_id: str, chat: dict) -> None:
+        """Tie a chat thread to a session; `chat` says where to post replies."""
+        with self._locked() as state:
+            state["threads"][key] = session_id
+            info = state["sessions"].setdefault(session_id, {"sent": 0})
+            info["chat"] = chat

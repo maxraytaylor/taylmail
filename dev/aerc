@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Start aerc wired to taylmail, with all state in dev/sandbox (gitignored).
+# Start taylmail serve and aerc wired to it, with all state in dev/sandbox
+# (gitignored). The daemon logs to dev/sandbox/serve.log and stops with aerc.
 # Usage: dev/aerc        (dev/aerc --reset wipes the sandbox first)
 set -euo pipefail
 
@@ -11,6 +12,7 @@ mkdir -p "$sandbox/Maildir/INBOX"/{cur,new,tmp}
 export TAYLMAIL_HOME=$sandbox/state
 export TAYLMAIL_MAILDIR=$sandbox/Maildir/INBOX
 export TAYLMAIL_CWD=$sandbox/repo
+export TAYLMAIL_USERS=you@example.com
 
 # A small repo with a bug for the agent to fix.
 if [[ ! -d $TAYLMAIL_CWD ]]; then
@@ -45,4 +47,7 @@ text/plain = colorize
 .headers = colorize
 CONF
 
-exec aerc -I -C "$sandbox/aerc.conf" -A "$sandbox/accounts.conf" "$@"
+"$root/.venv/bin/taylmail" serve >> "$sandbox/serve.log" 2>&1 &
+serve=$!
+trap 'kill $serve' EXIT
+aerc -I -C "$sandbox/aerc.conf" -A "$sandbox/accounts.conf" "$@"

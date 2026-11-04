@@ -26,7 +26,8 @@ diff
 def user_mail(to: str, refs: str = "", frm: str = "you@example.com", extra: str = "") -> bytes:
     head = f"In-Reply-To: {refs.split()[-1]}\nReferences: {refs}\n" if refs else ""
     return f"""\
-{extra}From: You <{frm}>
+{extra}Return-Path: <{frm}>
+From: You <{frm}>
 To: {to}
 Subject: Re: [PATCH 2/2] something
 Message-ID: <reply-1@example.com>
@@ -44,7 +45,7 @@ class TaylmailTest(unittest.TestCase):
             cwd=self.tmp,
             address="claude@taylmail.localhost",
             users=("you@example.com",),
-            trust_from=True,
+            sender_check="return-path",
         )
         self.sent = []
         smtp = mock.patch.object(mail, "_smtp_send", lambda cfg, msg, rcpts: self.sent.append(msg))
@@ -106,11 +107,16 @@ class TaylmailTest(unittest.TestCase):
         self.assertEqual(self.queued(), [])
 
     def test_intake_needs_authentication_unless_trusted(self):
-        self.cfg = replace(self.cfg, trust_from=False)
+        self.cfg = replace(self.cfg, sender_check="dmarc")
         raw = user_mail("claude@taylmail.localhost")
         self.assertIsNone(mail.intake(self.cfg, raw))
         good = "Authentication-Results: mx.example.net; dmarc=pass (p=none) header.from=example.com\n"
         self.assertIsNotNone(mail.intake(self.cfg, user_mail("claude@taylmail.localhost", extra=good)))
+
+    def test_return_path_must_match_from(self):
+        forged = "Return-Path: <evil@example.org>\n"
+        raw = user_mail("claude@taylmail.localhost", extra=forged)
+        self.assertIsNone(mail.intake(self.cfg, raw))
 
     def test_only_topmost_authentication_results_counts(self):
         top = "Authentication-Results: mx.example.net; dmarc=fail header.from=example.com\n"

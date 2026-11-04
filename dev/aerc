@@ -17,8 +17,8 @@ export TAYLMAIL_USERS=you@taylmail.test
 export TAYLMAIL_IMAP=imap+insecure://127.0.0.1:1143
 export TAYLMAIL_SMTP=smtp+insecure://127.0.0.1:1587
 export TAYLMAIL_MAIL_PASSWORD_FILE=$sandbox/mail-password
-# The dev SMTP sink accepts anyone, so nothing vouches for the sender.
-export TAYLMAIL_TRUST_FROM=1
+# The dev SMTP sink records the envelope sender in Return-Path.
+export TAYLMAIL_SENDER_CHECK=return-path
 echo dev > "$TAYLMAIL_MAIL_PASSWORD_FILE"
 
 # A small repo with a bug for the agent to fix.

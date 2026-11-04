@@ -1,5 +1,8 @@
 """Dev SMTP server: delivers each recipient's mail into Dovecot's Maildir.
 
+Like a delivering server, it adds Return-Path from the envelope sender. It
+checks no logins, so anyone on localhost can send as anyone.
+
 Usage: python dev/smtp-sink.py MAILROOT PORT
 Plus-addresses (claude+x@...) go to the base user, like most providers.
 """
@@ -20,7 +23,7 @@ class Deliver:
             local, _, domain = rcpt.lower().partition("@")
             user = f"{local.split('+')[0]}@{domain}"
             box = mailbox.Maildir(root / user, create=True)
-            box.add(envelope.original_content)
+            box.add(f"Return-Path: <{envelope.mail_from}>\r\n".encode() + envelope.original_content)
             print(f"smtp-sink: {envelope.mail_from} -> {rcpt}", flush=True)
         return "250 OK"
 

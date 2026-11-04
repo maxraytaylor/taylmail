@@ -72,9 +72,14 @@ $env.TAYLMAIL_CWD = "/srv/project"
 taylmail serve
 ```
 
-Only mail from `TAYLMAIL_USERS` is read. The mail server must also vouch for
-it: the topmost `Authentication-Results` header needs `dmarc=pass` or
-`dkim=pass` for the sender's domain. The agent only ever mails
+Only mail from `TAYLMAIL_USERS` is read, and the mail server must vouch for
+the sender. By default (`TAYLMAIL_SENDER_CHECK=dmarc`), the topmost
+`Authentication-Results` header needs `dmarc=pass` or `dkim=pass` for the
+sender's domain. A private server that takes mail only from its own users
+adds no such header. With `return-path`, the topmost `Return-Path` must
+match `From` instead. Use that only if the server binds the envelope sender
+to the login (Postfix: `reject_sender_login_mismatch`), drops `Return-Path`
+headers from submitted mail, and doesn't accept mail from the internet. The agent only ever mails
 `TAYLMAIL_USERS`, whatever addresses it asks for.
 
 ## Chat: Open WebUI Channel App
@@ -123,7 +128,7 @@ Open WebUI user IDs.
 | `TAYLMAIL_MAIL_USER` | `TAYLMAIL_ADDRESS` | IMAP/SMTP login |
 | `TAYLMAIL_MAIL_PASSWORD_FILE` | | IMAP/SMTP password |
 | `TAYLMAIL_POLL_SECONDS` | `15` | IMAP poll interval, only for servers without IDLE or Python before 3.14 |
-| `TAYLMAIL_TRUST_FROM` | off | `1` skips the DMARC/DKIM check (testing only) |
+| `TAYLMAIL_SENDER_CHECK` | `dmarc` | how to trust your From line; see [Mail server](#mail-server) |
 | `TAYLMAIL_CHAT_LISTEN` | `127.0.0.1:8000` | where the Channel App listens |
 | `TAYLMAIL_CHAT_API_KEY_FILE` | (chat off) | key Open WebUI presents when connecting |
 | `TAYLMAIL_CHAT_PRIVATE_KEY_FILE` | | Ed25519 PEM the app signs with |

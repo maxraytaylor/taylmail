@@ -44,7 +44,7 @@ class Config:
     mail_user: str | None = None
     mail_password_file: Path | None = None
     poll_seconds: float = 15.0
-    trust_from: bool = False  # skip the Authentication-Results check (dev servers)
+    sender_check: str = "dmarc"  # how to trust From: "dmarc" or "return-path"
     # Open WebUI Channel App; unset key file means no chat.
     chat_listen: str = "127.0.0.1:8000"
     chat_api_key_file: Path | None = None
@@ -99,7 +99,7 @@ def load() -> Config:
         mail_user=env("TAYLMAIL_MAIL_USER"),
         mail_password_file=_path(env("TAYLMAIL_MAIL_PASSWORD_FILE")),
         poll_seconds=float(env("TAYLMAIL_POLL_SECONDS", "15")),
-        trust_from=env("TAYLMAIL_TRUST_FROM") == "1",
+        sender_check=env("TAYLMAIL_SENDER_CHECK", "dmarc"),
         chat_listen=env("TAYLMAIL_CHAT_LISTEN", "127.0.0.1:8000"),
         chat_api_key_file=_path(env("TAYLMAIL_CHAT_API_KEY_FILE")),
         chat_private_key_file=_path(env("TAYLMAIL_CHAT_PRIVATE_KEY_FILE")),

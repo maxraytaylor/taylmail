@@ -61,11 +61,21 @@ def authenticated(msg: EmailMessage) -> bool:
     return bool(re.search(rf"\bdkim=pass\b[^;]*header\.[di]=@?{re.escape(domain)}\b", top))
 
 
+def envelope_sender(msg: EmailMessage) -> str | None:
+    """The topmost Return-Path, which the delivering server adds."""
+    paths = msg.get_all("Return-Path") or []
+    return getaddresses([str(paths[0])])[0][1].lower() if paths else None
+
+
 def authorized(cfg: Config, msg: EmailMessage) -> str | None:
     """Reason to drop this mail, or None if the agent may read it."""
     if cfg.users and sender(msg) not in {u.lower() for u in cfg.users}:
         return f"sender {sender(msg)} not in TAYLMAIL_USERS"
-    if not (cfg.trust_from or authenticated(msg)):
+    if cfg.sender_check == "return-path":
+        # For a server that binds the envelope sender to the login.
+        if envelope_sender(msg) != sender(msg):
+            return f"Return-Path {envelope_sender(msg)} doesn't match From"
+    elif not authenticated(msg):
         return "no passing DMARC/DKIM in Authentication-Results"
     return None
 

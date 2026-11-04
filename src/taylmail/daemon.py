@@ -204,6 +204,8 @@ def run(cfg: Config) -> int:
         raise SystemExit("taylmail serve: set TAYLMAIL_USERS to the address(es) you mail from")
     if not (cfg.imap and cfg.smtp):
         raise SystemExit("taylmail serve: set TAYLMAIL_IMAP and TAYLMAIL_SMTP")
+    if cfg.sender_check not in ("dmarc", "return-path"):
+        raise SystemExit("taylmail serve: TAYLMAIL_SENDER_CHECK must be dmarc or return-path")
     if cfg.chat_api_key_file and not cfg.chat_private_key_file:
         raise SystemExit("taylmail serve: set TAYLMAIL_CHAT_PRIVATE_KEY_FILE too")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")

@@ -29,14 +29,12 @@ class Daemon:
 
     async def main(self) -> None:
         cfg = self.cfg
-        tasks = [self.scheduler(), self.outbox_loop()]
-        if cfg.imap:
-            tasks.append(self.imap_loop())
+        tasks = [self.scheduler(), self.outbox_loop(), self.imap_loop()]
         if cfg.chat_api_key_file:
             tasks.append(self.serve_chat())
         log.info(
             "serving %s: mail %s, chat %s", cfg.address,
-            f"IMAP {cfg.imap.host}" if cfg.imap else f"local Maildir {cfg.maildir}",
+            f"IMAP {cfg.imap.host}:{cfg.imap.port}",
             cfg.chat_listen if cfg.chat_api_key_file else "off",
         )
         await asyncio.gather(*tasks)
@@ -45,7 +43,7 @@ class Daemon:
 
     async def imap_loop(self) -> None:
         def handle(raw: bytes) -> None:
-            if sid := mail.intake(self.cfg, raw, trusted=False):
+            if sid := mail.intake(self.cfg, raw):
                 log.info("mail for session %s", sid)
 
         while True:
@@ -183,6 +181,8 @@ class Daemon:
 def run(cfg: Config) -> int:
     if not cfg.users:
         raise SystemExit("taylmail serve: set TAYLMAIL_USERS to the address(es) you mail from")
+    if not (cfg.imap and cfg.smtp):
+        raise SystemExit("taylmail serve: set TAYLMAIL_IMAP and TAYLMAIL_SMTP")
     if cfg.chat_api_key_file and not cfg.chat_private_key_file:
         raise SystemExit("taylmail serve: set TAYLMAIL_CHAT_PRIVATE_KEY_FILE too")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")

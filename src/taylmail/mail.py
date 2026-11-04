@@ -1,11 +1,10 @@
-"""Email adapter: user mail in (u2a spool or IMAP), agent mail out (Maildir or SMTP)."""
+"""Email adapter: user mail in over IMAP, agent mail out over SMTP."""
 
 import email
 import email.policy
 import imaplib
 import json
 import logging
-import mailbox
 import re
 import smtplib
 import ssl
@@ -33,10 +32,10 @@ def session_from_addresses(cfg: Config, *headers: str | None) -> str | None:
     return None
 
 
-def find_session(cfg: Config, msg: EmailMessage, recipients: list[str]) -> str | None:
+def find_session(cfg: Config, msg: EmailMessage) -> str | None:
     """Plus-address first, then the Message-ID map via In-Reply-To/References."""
     to_headers = msg.get_all("To", []) + msg.get_all("Cc", []) + msg.get_all("Delivered-To", [])
-    if sid := session_from_addresses(cfg, ", ".join(recipients), *to_headers):
+    if sid := session_from_addresses(cfg, *to_headers):
         return sid
     refs = (msg["References"] or "").split() + (msg["In-Reply-To"] or "").split()
     return Store(cfg.home).lookup(refs)
@@ -62,11 +61,11 @@ def authenticated(msg: EmailMessage) -> bool:
     return bool(re.search(rf"\bdkim=pass\b[^;]*header\.[di]=@?{re.escape(domain)}\b", top))
 
 
-def authorized(cfg: Config, msg: EmailMessage, *, trusted: bool) -> str | None:
+def authorized(cfg: Config, msg: EmailMessage) -> str | None:
     """Reason to drop this mail, or None if the agent may read it."""
     if cfg.users and sender(msg) not in {u.lower() for u in cfg.users}:
         return f"sender {sender(msg)} not in TAYLMAIL_USERS"
-    if not (trusted or cfg.trust_from or authenticated(msg)):
+    if not (cfg.trust_from or authenticated(msg)):
         return "no passing DMARC/DKIM in Authentication-Results"
     return None
 
@@ -82,14 +81,14 @@ def render_prompt(msg: EmailMessage) -> str:
     return f"{head}\n\n{body}"
 
 
-def intake(cfg: Config, raw: bytes, recipients: list[str] = (), *, trusted: bool) -> str | None:
+def intake(cfg: Config, raw: bytes) -> str | None:
     """Queue a user mail for its session. Returns the session ID, or None if dropped."""
     msg = parse(raw)
-    if reason := authorized(cfg, msg, trusted=trusted):
+    if reason := authorized(cfg, msg):
         log.warning("dropping %s: %s", msg["Message-ID"], reason)
         return None
     store = Store(cfg.home)
-    session_id = find_session(cfg, msg, list(recipients))
+    session_id = find_session(cfg, msg)
     if session_id is None or store.session(session_id) is None:
         # Don't trust a session ID the sender made up.
         session_id = str(uuid.uuid4())
@@ -174,10 +173,7 @@ def send(
         store.record_message(mid, session_id, sent=True)
         store.update_session(session_id, last_email=mid)
 
-    if cfg.smtp:
-        _smtp_send(cfg, msg, _envelope(cfg, msg, recipients))
-    else:
-        maildir_add(cfg, msg)
+    _smtp_send(cfg, msg, _envelope(cfg, msg, recipients))
     return mid
 
 
@@ -191,17 +187,7 @@ def _envelope(cfg: Config, msg: EmailMessage, recipients: list[str]) -> list[str
     return rcpts or [cfg.user]
 
 
-def maildir_add(cfg: Config, msg: EmailMessage, *, seen: bool = False) -> None:
-    cfg.maildir.parent.mkdir(parents=True, exist_ok=True)
-    box = mailbox.Maildir(cfg.maildir, create=True)
-    mmsg = mailbox.MaildirMessage(msg.as_bytes())
-    if seen:
-        mmsg.set_subdir("cur")
-        mmsg.add_flag("S")
-    box.add(mmsg)
-
-
-# --- Remote servers ----------------------------------------------------------
+# --- Servers -----------------------------------------------------------------
 
 
 def _password(cfg: Config) -> str:

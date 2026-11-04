@@ -1,4 +1,4 @@
-"""Settings, all from environment variables so aerc, git and systemd can call us bare."""
+"""Settings, all from environment variables so git and systemd can call us bare."""
 
 import os
 import shutil
@@ -33,16 +33,14 @@ class Server:
 @dataclass(frozen=True)
 class Config:
     home: Path  # state: session map, inbox, outbox, logs
-    maildir: Path  # local mode: the Maildir folder aerc reads (has cur/new/tmp)
     address: str  # the agent's address; sessions use local+SESSION@domain
     users: tuple[str, ...]  # who may talk to the agent by email; the first gets its mail
     cwd: Path  # where new sessions work (usually a git repo)
     claude_cli: str
     permission_mode: str
     model: str | None
-    # Remote mail; unset means local mode (u2a spool in, Maildir out).
-    imap: Server | None = None
-    smtp: Server | None = None
+    imap: Server | None = None  # the agent's mailbox
+    smtp: Server | None = None  # where the agent submits mail
     mail_user: str | None = None
     mail_password_file: Path | None = None
     poll_seconds: float = 15.0
@@ -87,7 +85,6 @@ def load() -> Config:
     imap, smtp = env("TAYLMAIL_IMAP"), env("TAYLMAIL_SMTP")
     return Config(
         home=Path(env("TAYLMAIL_HOME", data / "taylmail")).expanduser(),
-        maildir=Path(env("TAYLMAIL_MAILDIR", "~/Maildir/taylmail/INBOX")).expanduser(),
         address=env("TAYLMAIL_ADDRESS", "claude@taylmail.localhost"),
         users=_list(env("TAYLMAIL_USERS")),
         cwd=Path(env("TAYLMAIL_CWD", os.getcwd())).expanduser(),

@@ -1,10 +1,10 @@
 """Run with: .venv/bin/python -m unittest discover tests"""
 
-import mailbox
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from taylmail import config, inbox, mail
 from taylmail.store import Store
@@ -41,28 +41,29 @@ class TaylmailTest(unittest.TestCase):
         self.cfg = replace(
             config.load(),
             home=self.tmp / "state",
-            maildir=self.tmp / "Maildir/INBOX",
             cwd=self.tmp,
             address="claude@taylmail.localhost",
             users=("you@example.com",),
-            imap=None,
-            smtp=None,
-            trust_from=False,
+            trust_from=True,
         )
+        self.sent = []
+        smtp = mock.patch.object(mail, "_smtp_send", lambda cfg, msg, rcpts: self.sent.append(msg))
+        smtp.start()
+        self.addCleanup(smtp.stop)
 
     def queued(self) -> list[inbox.Job]:
         return [j for jobs in inbox.pending(self.cfg).values() for j in jobs]
 
     def test_send_delivers_and_records(self):
         mail.send(self.cfg, mail.parse(patch_mail(1)), session_id=None)
-        self.assertEqual(len(mailbox.Maildir(self.cfg.maildir)), 1)
+        self.assertEqual(len(self.sent), 1)
         store = Store(self.cfg.home)
         self.assertEqual(store.lookup(["<patch-1@taylmail.localhost>"]), SID)
         self.assertEqual(store.session(SID)["sent"], 1)
 
     def test_send_rewrites_plain_from(self):
         mail.send(self.cfg, mail.parse(patch_mail(1, frm="claude")), session_id=SID)
-        (stored,) = mailbox.Maildir(self.cfg.maildir)
+        (stored,) = self.sent
         self.assertIn(f"claude+{SID}@", stored["From"])
         self.assertIn(f"claude+{SID}@", stored["Reply-To"])
 
@@ -79,7 +80,7 @@ class TaylmailTest(unittest.TestCase):
 
     def test_intake_finds_session_by_plus_address(self):
         Store(self.cfg.home).update_session(SID, started=False)
-        sid = mail.intake(self.cfg, user_mail(f"claude+{SID}@taylmail.localhost"), trusted=True)
+        sid = mail.intake(self.cfg, user_mail(f"claude+{SID}@taylmail.localhost"))
         self.assertEqual(sid, SID)
         (job,) = self.queued()
         self.assertEqual((job.session, job.source), (SID, "email"))
@@ -88,27 +89,28 @@ class TaylmailTest(unittest.TestCase):
     def test_intake_falls_back_to_references(self):
         mail.send(self.cfg, mail.parse(patch_mail(2)), session_id=None)
         refs = "<patch-0@taylmail.localhost> <patch-2@taylmail.localhost>"
-        sid = mail.intake(self.cfg, user_mail("someone-else@example.com", refs), trusted=True)
+        sid = mail.intake(self.cfg, user_mail("someone-else@example.com", refs))
         self.assertEqual(sid, SID)
 
     def test_intake_new_conversation(self):
-        sid = mail.intake(self.cfg, user_mail("claude@taylmail.localhost"), trusted=True)
+        sid = mail.intake(self.cfg, user_mail("claude@taylmail.localhost"))
         self.assertNotIn(sid, (None, SID))
 
     def test_intake_ignores_unknown_session(self):
-        sid = mail.intake(self.cfg, user_mail(f"claude+{SID}@taylmail.localhost"), trusted=True)
+        sid = mail.intake(self.cfg, user_mail(f"claude+{SID}@taylmail.localhost"))
         self.assertNotIn(sid, (None, SID))
 
     def test_intake_drops_strangers(self):
         raw = user_mail("claude@taylmail.localhost", frm="evil@example.org")
-        self.assertIsNone(mail.intake(self.cfg, raw, trusted=True))
+        self.assertIsNone(mail.intake(self.cfg, raw))
         self.assertEqual(self.queued(), [])
 
-    def test_intake_needs_authentication_when_remote(self):
+    def test_intake_needs_authentication_unless_trusted(self):
+        self.cfg = replace(self.cfg, trust_from=False)
         raw = user_mail("claude@taylmail.localhost")
-        self.assertIsNone(mail.intake(self.cfg, raw, trusted=False))
+        self.assertIsNone(mail.intake(self.cfg, raw))
         good = "Authentication-Results: mx.example.net; dmarc=pass (p=none) header.from=example.com\n"
-        self.assertIsNotNone(mail.intake(self.cfg, user_mail("claude@taylmail.localhost", extra=good), trusted=False))
+        self.assertIsNotNone(mail.intake(self.cfg, user_mail("claude@taylmail.localhost", extra=good)))
 
     def test_only_topmost_authentication_results_counts(self):
         top = "Authentication-Results: mx.example.net; dmarc=fail header.from=example.com\n"

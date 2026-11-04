@@ -1,4 +1,4 @@
-"""taylmail serve | u2a | a2u"""
+"""taylmail serve | a2u"""
 
 import sys
 
@@ -6,7 +6,6 @@ from . import config
 
 USAGE = """\
 usage: taylmail serve                                         (the daemon; runs agent turns)
-       taylmail u2a [recipient...] < message                  (aerc `outgoing`, local mode)
        taylmail a2u [-i] [recipient...] < message             (git send-email --sendmail-cmd)
 """
 
@@ -21,9 +20,6 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "serve" and not rest:
         from . import daemon
         return daemon.run(cfg)
-    if cmd == "u2a":
-        from . import u2a
-        return u2a.main(cfg, rest)
     if cmd == "a2u":
         from . import a2u
         return a2u.main(cfg, rest)

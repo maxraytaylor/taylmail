@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
-# Start taylmail serve and aerc wired to it, with all state in dev/sandbox
-# (gitignored). The daemon logs to dev/sandbox/serve.log and stops with aerc.
-# Usage: dev/aerc        (dev/aerc --reset wipes the sandbox first)
+# Start taylmail serve and aerc against dev/mailserver (run that first), with
+# all state in dev/sandbox (gitignored). The daemon logs to
+# dev/sandbox/serve.log and stops with aerc.
+# Usage: dev/aerc        (dev/aerc --reset wipes taylmail's state first)
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 sandbox=$root/dev/sandbox
-if [[ ${1:-} == --reset ]]; then rm -rf "$sandbox"; shift; fi
-mkdir -p "$sandbox/Maildir/INBOX"/{cur,new,tmp}
+if [[ ${1:-} == --reset ]]; then rm -rf "$sandbox/state" "$sandbox/repo"; shift; fi
+mkdir -p "$sandbox"
 
 export TAYLMAIL_HOME=$sandbox/state
-export TAYLMAIL_MAILDIR=$sandbox/Maildir/INBOX
 export TAYLMAIL_CWD=$sandbox/repo
-export TAYLMAIL_USERS=you@example.com
+export TAYLMAIL_ADDRESS=claude@taylmail.test
+export TAYLMAIL_USERS=you@taylmail.test
+export TAYLMAIL_IMAP=imap+insecure://127.0.0.1:1143
+export TAYLMAIL_SMTP=smtp+insecure://127.0.0.1:1587
+export TAYLMAIL_MAIL_PASSWORD_FILE=$sandbox/mail-password
+# The dev SMTP sink accepts anyone, so nothing vouches for the sender.
+export TAYLMAIL_TRUST_FROM=1
+echo dev > "$TAYLMAIL_MAIL_PASSWORD_FILE"
 
 # A small repo with a bug for the agent to fix.
 if [[ ! -d $TAYLMAIL_CWD ]]; then
@@ -28,10 +35,10 @@ fi
 umask 077
 cat > "$sandbox/accounts.conf" <<CONF
 [taylmail]
-source   = maildir://$sandbox/Maildir
+source   = imap+insecure://you%40taylmail.test:dev@127.0.0.1:1143
+outgoing = smtp+insecure+none://127.0.0.1:1587
 default  = INBOX
-from     = You <you@example.com>
-outgoing = $root/.venv/bin/taylmail u2a
+from     = You <you@taylmail.test>
 CONF
 
 cat > "$sandbox/aerc.conf" <<CONF

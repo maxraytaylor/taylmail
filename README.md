@@ -8,11 +8,10 @@ One daemon, `taylmail serve`, owns every session. Adapters queue your
 messages, and the daemon runs one agent turn per session at a time:
 
 ```
-aerc ──▶ u2a (local) or your mail provider (IMAP) ─┐
-                                                   ├─▶ inbox spool ─▶ taylmail serve ─▶ agent turn
-Open WebUI channel ──Socket.IO (Channel App)───────┘                                    │
-                                                                                        ▼
-aerc ◀── Maildir (local) or SMTP ◀── outbox ◀── a2u ◀── git send-email --sendmail-cmd
+aerc ──SMTP──▶ mail server ──IMAP──▶ ┐
+Open WebUI channel ──Socket.IO──────▶ ┴─▶ inbox spool ─▶ taylmail serve ─▶ agent turn
+                                                                              │
+aerc ◀──IMAP── mail server ◀──SMTP── outbox ◀── a2u ◀── git send-email ◀──────┘
 Open WebUI thread ◀── status message, final reply, "📧 Sent" notices
 ```
 
@@ -48,38 +47,16 @@ python3 -m venv .venv
 dev/aerc           # or: dev/aerc --reset   to start from scratch
 ```
 
-This starts `taylmail serve` and aerc against a sandbox in `dev/sandbox/`.
-The sandbox holds a Maildir, the taylmail state and a small repo with a bug
-in it. Your own aerc config is not touched. To start, compose to
-`claude@taylmail.localhost`. The daemon logs to `dev/sandbox/serve.log`.
+Run `dev/mailserver` first. It starts a throwaway Dovecot IMAP server and
+an SMTP sink on localhost. `dev/aerc` then starts `taylmail serve` and an
+aerc that use them, with taylmail's state and a small repo with a bug in it
+under `dev/sandbox/`. Your own aerc config is not touched. To start, compose
+to `claude@taylmail.test`. The daemon logs to `dev/sandbox/serve.log`.
 
-`dev/mailserver` runs a throwaway Dovecot IMAP server and an SMTP sink on
-localhost for trying remote mode (see the script for accounts).
+## Mail server
 
-## Local mode: aerc and the agent on one machine
-
-With `TAYLMAIL_IMAP`/`TAYLMAIL_SMTP` unset, no mail server is involved.
-aerc's `outgoing` command, `taylmail u2a`, queues your mail for the daemon.
-The agent's mail goes into the Maildir aerc reads.
-
-`~/.config/aerc/accounts.conf`:
-
-```ini
-[taylmail]
-source   = maildir://~/Maildir/taylmail
-default  = INBOX
-from     = You <you@example.com>
-outgoing = /home/you/src/vibetaylmail/.venv/bin/taylmail u2a
-```
-
-Run `taylmail serve` with `TAYLMAIL_USERS=you@example.com`. Your `from`
-address needs a dotted domain, because `git send-email` rejects
-`you@localhost`.
-
-## Remote mode: the agent on a home server
-
-Give the agent its own mailbox at a provider that supports plus-addressing.
-The daemon polls it over IMAP and sends over SMTP. Your aerc stays an
+The agent needs its own mailbox on a server that supports plus-addressing.
+The daemon reads it over IMAP and sends over SMTP. Your aerc stays an
 ordinary mail client.
 
 ```nu
@@ -92,7 +69,7 @@ $env.TAYLMAIL_CWD = "/srv/project"
 taylmail serve
 ```
 
-Only mail from `TAYLMAIL_USERS` is read. The provider must also vouch for
+Only mail from `TAYLMAIL_USERS` is read. The mail server must also vouch for
 it: the topmost `Authentication-Results` header needs `dmarc=pass` or
 `dkim=pass` for the sender's domain. The agent only ever mails
 `TAYLMAIL_USERS`, whatever addresses it asks for.
@@ -138,9 +115,8 @@ Open WebUI user IDs.
 | `TAYLMAIL_CWD` | current directory | where the agent works; a git repo |
 | `TAYLMAIL_ADDRESS` | `claude@taylmail.localhost` | the agent's address; sessions use `local+SESSION@domain` |
 | `TAYLMAIL_HOME` | `~/.local/share/taylmail` | state and spools |
-| `TAYLMAIL_MAILDIR` | `~/Maildir/taylmail/INBOX` | local mode: the folder aerc reads |
-| `TAYLMAIL_IMAP` | (local mode) | `imaps://host[:port]`, `imap://` (STARTTLS) or `imap+insecure://` |
-| `TAYLMAIL_SMTP` | (local mode) | `smtps://`, `smtp://` (STARTTLS) or `smtp+insecure://` |
+| `TAYLMAIL_IMAP` | (required) | `imaps://host[:port]`, `imap://` (STARTTLS) or `imap+insecure://` |
+| `TAYLMAIL_SMTP` | (required) | `smtps://`, `smtp://` (STARTTLS) or `smtp+insecure://` |
 | `TAYLMAIL_MAIL_USER` | `TAYLMAIL_ADDRESS` | IMAP/SMTP login |
 | `TAYLMAIL_MAIL_PASSWORD_FILE` | | IMAP/SMTP password |
 | `TAYLMAIL_POLL_SECONDS` | `15` | IMAP poll interval |

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# A throwaway mail provider for trying remote mode: Dovecot IMAP on 1143 and
+# an SMTP sink on 1587, both plaintext on localhost. State in dev/sandbox/mail.
+# Accounts (password "dev"): claude@taylmail.test and you@taylmail.test.
+# Usage: dev/mailserver        (needs nix; Ctrl-C stops both)
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+d=$root/dev/sandbox/mail
+mkdir -p "$d"/{run,state,mail,home}
+tools=$(nix build --no-link --print-out-paths nixpkgs#dovecot)
+py=$(nix build --no-link --print-out-paths --impure --expr \
+    'with import (builtins.getFlake "nixpkgs") {}; python3.withPackages (p: [p.aiosmtpd])')
+
+printf '%s:{PLAIN}dev::::::\n' claude@taylmail.test you@taylmail.test > "$d/passwd"
+cat > "$d/dovecot.conf" <<CONF
+dovecot_config_version = 2.4.0
+dovecot_storage_version = 2.4.0
+base_dir = $d/run
+state_dir = $d/state
+log_path = $d/dovecot.log
+default_internal_user = $(id -un)
+default_internal_group = $(id -gn)
+default_login_user = $(id -un)
+protocols = imap
+listen = 127.0.0.1
+ssl = no
+auth_allow_cleartext = yes
+mail_driver = maildir
+mail_path = $d/mail/%{user}
+mail_home = $d/home/%{user}
+passdb passwd-file {
+  passwd_file_path = $d/passwd
+}
+userdb static {
+  fields {
+    uid = $(id -u)
+    gid = $(id -g)
+  }
+}
+service imap-login {
+  chroot =
+  inet_listener imap {
+    port = 1143
+  }
+}
+service anvil {
+  chroot =
+}
+CONF
+
+"$tools/bin/dovecot" -F -c "$d/dovecot.conf" &
+trap 'kill $! 2>/dev/null' EXIT
+exec "$py/bin/python" "$root/dev/smtp-sink.py" "$d/mail" 1587

@@ -1,4 +1,32 @@
-# taylmail
+# Taylmail
+
+## === HUMAN WRITING ===
+
+Development: github.com/maxraytaylor/taylmail
+
+Greetings. I'm Max Raymundo Taylor and this is Taylmail, some prototypical software meant to help you review a coding agent's code more like you would with a *mailing list contributor* (receiving, applying, and replying to patch series emails) than you would with a *forge contributor* (reviewing and commenting on pull requests) or *pair programmer* (working in a shared directory and chatting).
+
+- Unlike working in a shared directory, this prevents malware from modifying CI configuration, build files, IDE configuration or Git hooks in the shared directory that your tools then access, such that they run arbitrary code in it when you perform an action as inoccuous as opening the project in an IDE or committing. `git diff` wouldn't reveal such modifications because they could be buried in a rewritten history, or made to a Git hook in `.git/` that `git diff` simply ignores, or made between the time of you reviewing the code and the time of you running it. Even the paranoid instructions in Docker Sandbox's documentation for its [direct mount mode](https://docs.docker.com/ai/sandboxes/security/isolation/#direct-mount), which advise the user to list the git hooks "after any agent session", wouldn't address these issues. Email patches, by contrast, can't rewrite your history or Git hooks, nor can they change the code from underneath you between the time of your review and the time of your execution, letting you be sure that that the changes that you read are the only changes that you're running
+
+- Unlike any method of forge-style code review that I am aware of (e.g. the Claude Code GitHub action) this email method re-uses the agent's session cache, which should allow it to get back to work after a receiving a comment more quickly and cheaply, and to answer questions about why it did something one way or another more accurately.
+
+- Unlike `git fetch`'ing from a Git server in the agent's sandbox (as in Docker Sandbox's [clone mode](https://docs.docker.com/ai/sandboxes/security/isolation/#clone-mode), ostensibly their answer to direct mount's risks) and reviewing the agent's patches using plain `git diff` or `log`, this lets us re-use the features that TUI email clients have already refined over the years to facilitate code review. For instance, the common `r-q` keyboard shortcut that automatically block-quotes the whole email (e.g. patch email) and opens it in `$EDITOR` so that you can easily insert your comments under parts (e.g. lines of code) that you want to comment on, as well as delete the parts that don't need to be part of your reply. This lets you navigate through and comment on patch lines with the same ease and efficiency your text editor of choice affords you, in the way that has powered OSS collaboration on huge projects for decades.
+
+Overall, I'm interested in this approach as a potential means to being able to securely and efficiently review agent code.
+
+That said, all in all, is this a good idea? I'm not yet sure. Communicating with an agent via email introduces some of the complexities of email into the development process, such as the need to provide an email server between yourself and the agent, and to configure your email client to use that server. Some of this complexity might just be part of the nature of network communication -- one might otherwise have to run a Git server and configure one's Git client to use that server as a remote anyway -- but overall, I'm not familiar enough with email yet to know whether this is the right way to do things.
+
+This vibe-coded prototype should help us all find out though. Yes I appreciate the irony of a vibe-coded code review tool. I'm aiming to use the slop to deal with the slop here. The vibe-coding process has, much faster than I could have done manually, gotten it into a state where one can run Taylmail as a server, plug Open WebUI into it, run an email server alongside, and ultimately achieve the goal of communicating with a single agent via both email and chat. There are still plenty of rough edges, but I'll test drive this prototypical form and find out if it's worth anyone's while. If it is, I'll develop a non-vibe-coded reimplementation for further development upon.
+
+Otherwise, it may be best to keep `git fetch`'ing, `diff`'ing, and clicking and dragging to copy-paste the parts we want to comment on into the agent's chat window. Like a barbarian.
+
+Frankly, while it should be possible in principle, I'm not yet even confident enough in its workings that I'd exactly "recommend" anyone else actually try installing this onto their machine. But if you are really interested in this workflow as I am, you *could* ask your AI agent of choice to set this up in a VM for you so that you can try chatting, emailing, and see if the mailing-list style code collaboration workflow for agents sparks joy for you. Should be a lot easier than starting from scratch, at least. And if you do that (or don't do that) and thus come up with any feedback or insights to share, I'd of course be very grateful to receive that.
+
+Otherwise, you could just let me continue test-driving it and check in now and again on progress. If it turns out to be worthwhile, I'll refine this into something practical. And if it turns out to be a terrible idea, I'll report that here to let the world know. You'll know where to find the updates either way.
+
+Thus ends my explanation. I'll let the AI explain the details of exactly how it all works and how to get it working further below.
+
+## === AI WRITING ===
 
 Talk to a Claude Code agent the way you'd talk to a contributor on a mailing
 list. The agent sends patch series and you reply inline in aerc. You can also
@@ -45,7 +73,7 @@ chat frontend ◀── /turn stream: status, "📧 Sent" notices, final reply
 With Nix, the flake's package brings Claude Code and git send-email along:
 
 ```nu
-nix run github:OWNER/taylmail -- serve
+nix run github:maxraytaylor/taylmail -- serve
 ```
 
 In a NixOS configuration, add the flake as an input and use
